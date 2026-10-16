@@ -1,1 +1,5 @@
 *.csv
+*.env
+logs/
+schedine/
+__pycache__/

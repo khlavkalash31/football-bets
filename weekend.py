@@ -2,7 +2,8 @@
 """
 Quote eque per i mercati sui gol e confronto con le quote del tuo book (inserite a mano).
 
-Dalle quote medie di mercato (1X2 e Under/Over 2.5, da fixtures.csv di football-data.co.uk)
+Dalle quote medie di mercato (1X2 e Under/Over 2.5: da The Odds API se nel file .env
+del progetto c'è ODDS_API_KEY, che copre anche la Champions League; altrimenti da fixtures.csv di football-data.co.uk)
 si ricavano i gol attesi delle due squadre e da lì la probabilità di ogni risultato esatto.
 Ogni giocata che dipende solo dai gol (1X2, doppia chance, U/O, Goal/NoGoal, multigol,
 risultato esatto e le loro combo) ha così una quota equa, senza margine.
@@ -28,7 +29,10 @@ import datetime as dt
 import io
 import itertools
 import re
+import json
+import os
 import sys
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -40,6 +44,12 @@ from scipy.stats import poisson
 from bet_model import LEAGUES, fair_probs
 
 FIXTURES_URL = "https://www.football-data.co.uk/fixtures.csv"
+ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
+ODDS_API_SPORTS = {"I1": "soccer_italy_serie_a", "SP1": "soccer_spain_la_liga", "E0": "soccer_epl",
+                   "F1": "soccer_france_ligue_one", "D1": "soccer_germany_bundesliga",
+                   "P1": "soccer_portugal_primeira_liga", "CL": "soccer_uefa_champs_league"}
+COMPETITIONS = {**LEAGUES, "CL": "Champions League"}  # la Champions c'è solo con The Odds API
+CONFIG_FILE = Path(__file__).resolve().parent / ".env"  # chiavi e credenziali, escluso da git
 # Correzione Dixon-Coles per i punteggi bassi, scelta su 2.500 partite 2022-2026 confrontando
 # rho = 0 / -0.1 / -0.2: con -0.1 GG, O1.5, NG+U2.5, 1X+U3.5 stanno tutti entro 1 punto dal reale
 # (con 0 GG era sottostimato di 1,7 punti, con -0.2 O1.5 sovrastimato di 1,5).
@@ -123,11 +133,56 @@ def market_menu(match: pd.Series, sels: list[str] = MENU) -> pd.DataFrame:
 
 
 def kickoff_it(match: pd.Series) -> pd.Timestamp:
-    """Gli orari di football-data sono inglesi: in Italia è un'ora dopo (tutto l'anno)."""
+    """Gli orari salvati sono inglesi (come in football-data): in Italia è un'ora dopo, tutto l'anno."""
     return pd.Timestamp(f"{match['Date']} {match['Time']}") + pd.Timedelta(hours=1)
 
 
 # ---------------------------------------------------------------- file del weekend
+
+def load_config(path: Path = CONFIG_FILE) -> dict[str, str]:
+    """Righe CHIAVE=valore del file di configurazione; le variabili d'ambiente hanno la precedenza."""
+    cfg = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                k, v = line.split("=", 1)
+                cfg[k.strip()] = v.split("#")[0].strip()
+    cfg.update({k: v for k in ("GMAIL_ADDRESS", "GMAIL_APP_PASSWORD", "EMAIL_TO", "ODDS_API_KEY")
+                if (v := os.environ.get(k))})
+    return {k: v for k, v in cfg.items() if v}
+
+
+def fetch_odds_api(key: str, divs: list[str], start: dt.date, days: int) -> pd.DataFrame:
+    """Quote 1X2 e U/O 2.5 dei bookmaker europei, nello stesso formato di fixtures.csv (2 crediti per lega)."""
+    rows = []
+    for div in [d for d in divs if d in ODDS_API_SPORTS]:
+        query = urllib.parse.urlencode({
+            "apiKey": key, "regions": "eu", "markets": "h2h,totals", "oddsFormat": "decimal",
+            "commenceTimeFrom": f"{start}T00:00:00Z", "commenceTimeTo": f"{start + dt.timedelta(days=days)}T00:00:00Z"})
+        with urllib.request.urlopen(f"{ODDS_API_URL.format(sport=ODDS_API_SPORTS[div])}?{query}", timeout=30) as r:
+            events, left = json.load(r), r.headers.get("x-requests-remaining")
+        print(f"  The Odds API {div}: {len(events)} partite, crediti rimasti {left}", file=sys.stderr)
+        for ev in events:
+            home, away = ev["home_team"], ev["away_team"]
+            x12, ou = [], []
+            for b in ev["bookmakers"]:
+                for mk in b["markets"]:
+                    o = {(x["name"], x.get("point")): x["price"] for x in mk["outcomes"]}
+                    if mk["key"] == "h2h" and all((n, None) in o for n in (home, "Draw", away)):
+                        x12.append([o[(home, None)], o[("Draw", None)], o[(away, None)]])
+                    elif mk["key"] == "totals" and ("Over", 2.5) in o and ("Under", 2.5) in o:
+                        ou.append([o[("Over", 2.5)], o[("Under", 2.5)]])
+            if not x12:
+                continue
+            t = pd.Timestamp(ev["commence_time"]).tz_convert("Europe/London")
+            x12, ou = np.array(x12), np.array(ou) if ou else np.full((1, 2), np.nan)
+            rows.append({"Div": div, "Date": f"{t:%d/%m/%Y}", "Time": f"{t:%H:%M}", "HomeTeam": home, "AwayTeam": away,
+                         **dict(zip(["AvgH", "AvgD", "AvgA"], x12.mean(axis=0))),
+                         **dict(zip(["MaxH", "MaxD", "MaxA"], x12.max(axis=0))),
+                         **dict(zip(["Avg>2.5", "Avg<2.5"], ou.mean(axis=0))), "Books": len(x12)})
+    return pd.DataFrame(rows, columns=["Div", "Date", "Time", "HomeTeam", "AwayTeam", "AvgH", "AvgD", "AvgA",
+                                       "MaxH", "MaxD", "MaxA", "Avg>2.5", "Avg<2.5", "Books"])
+
 
 def fetch_fixtures(path: Path | None) -> pd.DataFrame:
     if path is not None:
@@ -163,7 +218,19 @@ def find_match(matches: pd.DataFrame, query: str) -> pd.Series:
 # ---------------------------------------------------------------- comandi
 
 def cmd_lista(args):
-    fx = fetch_fixtures(args.fixtures)
+    key = load_config().get("ODDS_API_KEY")
+    if args.source == "odds-api" or (args.source == "auto" and key and args.fixtures is None):
+        if not key:
+            sys.exit(f"Manca ODDS_API_KEY in {CONFIG_FILE}.")
+        try:
+            fx = fetch_odds_api(key, args.leagues, args.start, args.days)
+        except Exception as e:  # chiave errata, crediti finiti, rete: meglio quote vecchie che niente
+            if args.source == "odds-api":
+                raise
+            print(f"The Odds API non disponibile ({e}): uso football-data, senza Champions League.")
+            fx = fetch_fixtures(args.fixtures)
+    else:
+        fx = fetch_fixtures(args.fixtures)
     fx = fx[fx["Div"].isin(args.leagues)].copy()
     fx["Date"] = pd.to_datetime(fx["Date"], dayfirst=True).dt.date
     fx = fx[(fx["Date"] >= args.start) & (fx["Date"] < args.start + dt.timedelta(days=args.days))]
@@ -281,7 +348,7 @@ def weekend_menu(matches: pd.DataFrame, after: pd.Timestamp | None = None) -> pd
         k = kickoff_it(m)
         if after is not None and k <= after:
             continue
-        menus.append(market_menu(m).assign(Partita=m["Partita"], Lega=LEAGUES.get(m["Div"], m["Div"]),
+        menus.append(market_menu(m).assign(Partita=m["Partita"], Lega=COMPETITIONS.get(m["Div"], m["Div"]),
                                            Inizio=k, Ora=f"{GIORNI[k.weekday()]} {k:%d/%m %H:%M}"))
     return pd.concat(menus, ignore_index=True) if menus else pd.DataFrame()
 
@@ -313,7 +380,7 @@ def cmd_proponi(args):
     print(f"\nWeekend {wdir.name} · proposte da {args.stake:.0f} euro, alternative tra loro "
           f"(partite tutte diverse: puoi anche dividere i {args.stake:.0f} euro su due).")
     print("Quote con * = stimate: gioca la partita solo se il tuo book paga almeno quella quota, "
-          "altrimenti chiedimi un'alternativa.")
+          "altrimenti scegline un'altra (notebook, sezione 'Cerca giocate').")
     used, saved = set(), []
     for name, legs, lo, hi in PROFILES:
         t = build_ticket(menu, legs, lo, hi, used)
@@ -330,7 +397,7 @@ def cmd_proponi(args):
                   f"quota {r['Quota']:5.2f}{star}  equa {r['Equa']:5.2f}  prob {r['Prob']:.0%}")
         saved.append(t.assign(Schedina=name, Puntata=args.stake))
     if saved:
-        out = pd.concat(saved)[["Schedina", "Ora", "Lega", "Partita", "Giocata", "Prob", "Equa", "Quota",
+        out = pd.concat(saved)[["Schedina", "Inizio", "Ora", "Lega", "Partita", "Giocata", "Prob", "Equa", "Quota",
                                  "Stimata", "Puntata"]]
         out.to_csv(wdir / "proposte.csv", index=False)
         print(f"\nSalvate in {wdir / 'proposte.csv'}. Il valore atteso è negativo per costruzione: "
@@ -345,7 +412,9 @@ def main():
     p = sub.add_parser("lista", help="quote eque delle prossime partite")
     p.add_argument("--start", type=dt.date.fromisoformat, default=dt.date.today(), help="AAAA-MM-GG, default oggi")
     p.add_argument("--days", type=int, default=4)
-    p.add_argument("--leagues", nargs="+", default=list(LEAGUES))
+    p.add_argument("--leagues", nargs="+", default=list(COMPETITIONS), help="codici: " + " ".join(COMPETITIONS))
+    p.add_argument("--source", choices=["auto", "odds-api", "football-data"], default="auto",
+                   help="auto = The Odds API se c'è ODDS_API_KEY, altrimenti football-data")
     p.add_argument("--fixtures", type=Path, help="fixtures.csv locale invece del download")
     p.set_defaults(func=cmd_lista)
 
