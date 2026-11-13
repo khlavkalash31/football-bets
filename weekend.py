@@ -323,7 +323,7 @@ def cmd_lista(args):
     print(f"\nQuote eque (senza margine) · {len(sheet)} partite · salvate in {wdir}/partite.csv\n")
     print(sheet.to_string(index=False, float_format="{:.2f}".format))
     print("\nGioca solo dove il tuo book paga più della quota equa (o quasi). Poi: python weekend.py valuta")
-    if not args.no_db:
+    if not getattr(args, "no_db", False):  # invio.py chiama cmd_lista senza questa opzione
         save_to_db(matches, source, raw_files, taken_at)
 
 
