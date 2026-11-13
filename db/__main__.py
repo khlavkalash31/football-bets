@@ -7,6 +7,7 @@
     python -m db alias                            # nomi squadra abbinati in automatico, da controllare
     python -m db alias the-odds-api "Inter Milan" Inter  # corregge (o conferma) un abbinamento
     python -m db alias the-odds-api "Club Brugge" "Club Brugge" --nuova  # squadra che football-data non ha
+    python -m db import-transfermarkt --download  # giocatori, presenze, titolari, valori (fino al 2025/26)
     python -m db stato                            # righe per tabella
 """
 from __future__ import annotations
@@ -55,6 +56,24 @@ def cmd_import_football_data(args):
     print(f"Importati {len(files)} file.")
 
 
+def cmd_import_transfermarkt(args):
+    from . import transfermarkt as tm
+
+    if args.dir:
+        files = tm.read_local(args.dir)
+    elif args.download:
+        files = tm.download()
+    else:
+        files = tm.latest_files()
+    with connect() as conn:
+        stats = tm.import_all(conn, files, args.first_season)
+    for k, v in stats.items():
+        print(f"  {k:<22} {v:>9}")
+    if stats["partite Transfermarkt"] and stats["partite abbinate"] < 0.9 * stats["partite Transfermarkt"]:
+        print("Meno del 90% delle partite abbinate: mancano stagioni di football-data? "
+              "(python -m db import-football-data --download)")
+
+
 def cmd_alias(args):
     with connect() as conn, conn.cursor() as cur:
         if args.source:
@@ -99,7 +118,7 @@ def cmd_stato(args):
     with connect() as conn, conn.cursor() as cur:
         print(f"Database: {database_url().split('@')[-1]}")
         for t in ["competitions", "teams", "team_aliases", "matches", "odds_snapshots", "predictions",
-                  "players", "player_match", "predicted_lineups", "raw_files"]:
+                  "players", "player_match", "player_value", "predicted_lineups", "raw_files"]:
             cur.execute(f"SELECT count(*) FROM {t}")
             print(f"  {t:<18} {cur.fetchone()[0]:>9}")
         cur.execute("""SELECT competition, min(season), max(season), count(*) FROM matches
@@ -122,6 +141,12 @@ def main():
     p.add_argument("--first-season", type=int, default=2016, help="prima stagione da scaricare (2016 = 2016/17)")
     p.add_argument("--leagues", nargs="+", default=list(LEAGUES))
     p.set_defaults(func=cmd_import_football_data)
+
+    p = sub.add_parser("import-transfermarkt", help="storico calciatori da transfermarkt-datasets")
+    p.add_argument("--download", action="store_true", help="scarica i file (qualche centinaio di MB)")
+    p.add_argument("--dir", type=Path, help="cartella con i CSV già scaricati (es. da Kaggle)")
+    p.add_argument("--first-season", type=int, default=2016, help="prima stagione (2016 = 2016/17)")
+    p.set_defaults(func=cmd_import_transfermarkt)
 
     p = sub.add_parser("alias", help="controlla o correggi i nomi squadra delle altre fonti")
     p.add_argument("source", nargs="?", help="fonte, es. the-odds-api")
