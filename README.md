@@ -74,6 +74,32 @@ Tabelle e viste: `db/sql/`. Per leggere i dati (notebook, frontend) conviene par
 Per spostare il database in cloud basta lo stesso `docker-compose.yml` su un altro server, oppure un Postgres
 gestito: cambia solo `DATABASE_URL`.
 
+## App (Streamlit)
+
+Interfaccia web con le stesse funzioni di `weekend.py`: **Partite** (quote eque), **Valuta le mie quote**,
+**Schedine proposte**, e, quando c'è il database, **Storico** (log loss apertura contro chiusura) e **Database**.
+
+Sul PC, insieme al database:
+
+```bash
+docker compose up -d               # avvia Postgres e l'app; le tabelle si creano da sole
+# poi apri http://localhost:8501
+```
+
+Senza Docker: `pip install -r requirements.txt` e `streamlit run app/app.py`.
+
+Con il database, la pagina Partite mostra l'ultima rilevazione salvata e ha un pulsante per aggiornarla
+(scarica le quote e le salva, come `weekend.py lista`). Senza database l'app scarica le quote al momento e le
+tiene in memoria un'ora: è così che gira su **Streamlit Community Cloud**, per dare un link a chi non vuole
+installare niente:
+
+1. su share.streamlit.io: New app, repository `football-bets`, file `app/app.py`;
+2. in Advanced settings → Secrets: `ODDS_API_KEY = "..."`;
+3. rendila privata e invita solo chi deve usarla (ogni download consuma i crediti della chiave).
+
+Il Postgres sul PC da lì non si raggiunge: l'app pubblicata mostra solo le partite dei prossimi giorni, senza
+Storico. Per averlo anche online serve un database in cloud (vedi sopra) e il suo `DATABASE_URL` nei secrets.
+
 ## Limiti noti
 
 - Le neopromosse vengono ignorate finché non hanno 8 partite nella finestra di addestramento.
