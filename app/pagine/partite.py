@@ -1,5 +1,3 @@
-import datetime as dt
-
 import streamlit as st
 
 import core
@@ -17,7 +15,7 @@ if core.db_ok():
             s = core.settings()
             with st.spinner("Scarico e salvo..."):
                 try:
-                    for m in core.refresh_into_db(s["leagues"], dt.date.today(), s["days"]):
+                    for m in core.refresh_into_db(s["leagues"], s["start"], s["days"]):
                         st.info(m)
                 except Exception as e:
                     st.error(f"Aggiornamento non riuscito: {e}")

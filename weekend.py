@@ -283,7 +283,10 @@ def build_matches(leagues: list[str], start: dt.date, days: int, source: str = "
         log(f"Senza quote 1X2 o U/O 2.5, escluse: {', '.join(fx.loc[missing, 'HomeTeam'] + ' - ' + fx.loc[missing, 'AwayTeam'])}")
     fx = fx[~missing].sort_values(["Date", "Time"]).reset_index(drop=True)
     if fx.empty:
-        raise ValueError(f"Nessuna partita tra {start} e i {days} giorni dopo (fixtures.csv aggiornato?).")
+        last = start + dt.timedelta(days=days - 1)
+        hint = ("le fonti non hanno ancora quote per quelle date, o è una pausa per le nazionali"
+                if used == "the-odds-api" else "fixtures.csv di football-data si aggiorna il martedì e il venerdì")
+        raise ValueError(f"Nessuna partita dal {start:%d/%m} al {last:%d/%m}: {hint}. Prova un'altra data di inizio.")
 
     p1x2 = fair_probs(fx[["AvgH", "AvgD", "AvgA"]].to_numpy(float))
     pou = fair_probs(fx[["Avg>2.5", "Avg<2.5"]].to_numpy(float))

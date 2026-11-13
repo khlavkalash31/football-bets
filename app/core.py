@@ -128,13 +128,15 @@ def current_matches() -> tuple[pd.DataFrame, str]:
         if df.empty:
             return df, "Nel database non ci sono partite future: aggiorna le quote."
         s = settings()
-        last = pd.Timestamp.now(tz=ROME).normalize() + pd.Timedelta(days=s["days"])
-        df = df[df["Div"].isin(s["leagues"]) & (pd.to_datetime(df["kickoff"], utc=True) < last)].reset_index(drop=True)
+        first = pd.Timestamp(s["start"], tz=ROME)
+        last = first + pd.Timedelta(days=s["days"])
+        k = pd.to_datetime(df["kickoff"], utc=True)
+        df = df[df["Div"].isin(s["leagues"]) & (k >= first) & (k < last)].reset_index(drop=True)
         t = pd.Timestamp(df["taken_at"].max()).tz_convert(ROME) if not df.empty else None
         return df, f"Quote dal database, rilevate il {t:%d/%m alle %H:%M}." if t else "Nessuna partita con questi filtri."
     s = settings()
     try:
-        df, source, msgs = live_matches(tuple(s["leagues"]), dt.date.today(), s["days"])
+        df, source, msgs = live_matches(tuple(s["leagues"]), s["start"], s["days"])
     except ValueError as e:
         return pd.DataFrame(), str(e)
     t = pd.Timestamp(df["taken_at"].max()).tz_convert(ROME)
@@ -145,7 +147,10 @@ def current_matches() -> tuple[pd.DataFrame, str]:
 def settings() -> dict:
     st.session_state.setdefault("leagues", list(COMPETITIONS))
     st.session_state.setdefault("days", 4)
-    return {"leagues": st.session_state["leagues"], "days": st.session_state["days"]}
+    if st.session_state.get("start") is None or st.session_state["start"] < dt.date.today():
+        st.session_state["start"] = dt.date.today()  # app rimasta aperta da ieri
+    return {"leagues": st.session_state["leagues"], "days": st.session_state["days"],
+            "start": st.session_state["start"]}
 
 
 def match_label(m: pd.Series) -> str:

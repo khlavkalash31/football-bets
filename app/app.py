@@ -1,4 +1,6 @@
 """App Streamlit: streamlit run app/app.py (oppure docker compose up -d e http://localhost:8501)."""
+import datetime as dt
+
 import streamlit as st
 
 import core
@@ -20,7 +22,8 @@ nav = st.navigation(pages)
 with st.sidebar:
     st.multiselect("Competizioni", list(core.COMPETITIONS), key="leagues",
                    format_func=lambda c: core.COMPETITIONS[c])
-    st.slider("Giorni da oggi", 1, 7, key="days")
+    st.date_input("Dal giorno", key="start", min_value=dt.date.today(), format="DD/MM/YYYY")
+    st.slider("Giorni", 1, 7, key="days")
     ok, msg = core.db_status()
     st.caption(("🟢 Database: " if ok else "⚪ ") + msg)
     if not core.odds_key():
