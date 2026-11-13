@@ -1,0 +1,26 @@
+# Postgres per lo storico di partite, quote e calciatori.
+#   docker compose up -d          # avvia (i dati restano nel volume anche spegnendo)
+#   python -m db migrate          # crea o aggiorna le tabelle
+# Password: POSTGRES_PASSWORD nel file .env accanto a questo file (default "bets", solo per uso locale).
+# La porta è aperta solo su 127.0.0.1: dal resto della rete non si raggiunge.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bets}
+      POSTGRES_USER: ${POSTGRES_USER:-bets}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bets}
+      TZ: Europe/Rome
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

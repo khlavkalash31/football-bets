@@ -1,0 +1,6 @@
+numpy
+pandas
+scipy
+matplotlib
+python-dotenv
+psycopg[binary]>=3.1
