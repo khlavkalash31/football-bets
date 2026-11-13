@@ -4,3 +4,4 @@ scipy
 matplotlib
 python-dotenv
 psycopg[binary]>=3.1
+streamlit>=1.40

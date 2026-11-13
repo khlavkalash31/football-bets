@@ -1,6 +1,7 @@
-# Postgres per lo storico di partite, quote e calciatori.
-#   docker compose up -d          # avvia (i dati restano nel volume anche spegnendo)
+# Postgres per lo storico di partite, quote e calciatori, e l'app Streamlit.
+#   docker compose up -d          # avvia database e app (i dati restano nel volume anche spegnendo)
 #   python -m db migrate          # crea o aggiorna le tabelle
+#   http://localhost:8501         # l'app
 # Password: POSTGRES_PASSWORD nel file .env accanto a questo file (default "bets", solo per uso locale).
 # La porta è aperta solo su 127.0.0.1: dal resto della rete non si raggiunge.
 services:
@@ -21,6 +22,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    command: sh -c "python -m db migrate && streamlit run app/app.py --server.address=0.0.0.0 --server.port=8501"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # dentro Docker il database si chiama "db", non localhost
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bets}:${POSTGRES_PASSWORD:-bets}@db:5432/${POSTGRES_DB:-bets}
+      TZ: Europe/Rome
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata:

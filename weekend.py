@@ -250,56 +250,75 @@ def save_to_db(matches: pd.DataFrame, source: str, raw_files: list, taken_at: dt
         print(f"\nDatabase non aggiornato ({type(e).__name__}: {e}). Postgres è avviato? (docker compose up -d)")
 
 
-def cmd_lista(args):
-    key = load_config().get("ODDS_API_KEY")
-    taken_at = dt.datetime.now(dt.timezone.utc)
+SHEET = ["1", "X", "2", "1X", "X2", "U2.5", "O2.5", "GG", "NG", "1+O1.5", "2+O1.5"]
+
+
+def build_matches(leagues: list[str], start: dt.date, days: int, source: str = "auto",
+                  fixtures: Path | None = None, key: str | None = None, log=print):
+    """Partite con quote medie e gol attesi (lam, mu). Ritorna (partite, fonte usata, file grezzi salvati).
+    Errori che impediscono di continuare: ValueError con il messaggio da mostrare."""
+    key = key if key is not None else load_config().get("ODDS_API_KEY")
     raw_files: list = []
-    source = "football-data"
-    if args.source == "odds-api" or (args.source == "auto" and key and args.fixtures is None):
+    used = "football-data"
+    if source == "odds-api" or (source == "auto" and key and fixtures is None):
         if not key:
-            sys.exit(f"Manca ODDS_API_KEY in {CONFIG_FILE}.")
+            raise ValueError(f"Manca ODDS_API_KEY in {CONFIG_FILE}.")
         try:
-            fx = fetch_odds_api(key, args.leagues, args.start, args.days, raw_files)
-            source = "the-odds-api"
+            fx = fetch_odds_api(key, leagues, start, days, raw_files)
+            used = "the-odds-api"
         except Exception as e:  # chiave errata, crediti finiti, rete: meglio quote vecchie che niente
-            if args.source == "odds-api":
+            if source == "odds-api":
                 raise
-            print(f"The Odds API non disponibile ({e}): uso football-data, senza Champions League.")
+            log(f"The Odds API non disponibile ({e}): uso football-data, senza Champions League.")
             raw_files = []
-            fx = fetch_fixtures(args.fixtures)
+            fx = fetch_fixtures(fixtures)
     else:
-        fx = fetch_fixtures(args.fixtures)
-    fx = fx[fx["Div"].isin(args.leagues)].copy()
+        fx = fetch_fixtures(fixtures)
+    fx = fx[fx["Div"].isin(leagues)].copy()
     fx["Date"] = pd.to_datetime(fx["Date"], dayfirst=True).dt.date
-    fx = fx[(fx["Date"] >= args.start) & (fx["Date"] < args.start + dt.timedelta(days=args.days))]
+    fx = fx[(fx["Date"] >= start) & (fx["Date"] < start + dt.timedelta(days=days))]
     cols = ["AvgH", "AvgD", "AvgA", "Avg>2.5", "Avg<2.5"]
     missing = fx[cols].isna().any(axis=1)
     if missing.any():
-        print(f"Senza quote 1X2 o U/O 2.5, escluse: {', '.join(fx.loc[missing, 'HomeTeam'] + ' - ' + fx.loc[missing, 'AwayTeam'])}")
+        log(f"Senza quote 1X2 o U/O 2.5, escluse: {', '.join(fx.loc[missing, 'HomeTeam'] + ' - ' + fx.loc[missing, 'AwayTeam'])}")
     fx = fx[~missing].sort_values(["Date", "Time"]).reset_index(drop=True)
     if fx.empty:
-        sys.exit(f"Nessuna partita tra {args.start} e i {args.days} giorni dopo (fixtures.csv aggiornato?).")
+        raise ValueError(f"Nessuna partita tra {start} e i {days} giorni dopo (fixtures.csv aggiornato?).")
 
     p1x2 = fair_probs(fx[["AvgH", "AvgD", "AvgA"]].to_numpy(float))
     pou = fair_probs(fx[["Avg>2.5", "Avg<2.5"]].to_numpy(float))
     goals = [fit_goals(p1x2[i], pou[i, 0]) for i in range(len(fx))]
     matches = fx[["Div", "Date", "Time", "HomeTeam", "AwayTeam", *cols]].assign(
         lam=[g[0] for g in goals], mu=[g[1] for g in goals])
+    return matches, used, raw_files
+
+
+def fair_sheet(matches: pd.DataFrame, sels: list[str] = SHEET) -> pd.DataFrame:
+    """Quote eque delle giocate principali, una riga per partita."""
+    rows = []
+    for _, m in matches.iterrows():
+        P = score_grid(m["lam"], m["mu"])
+        rows.append({"Ora IT": kickoff_it(m).strftime("%d/%m %H:%M"), "Lega": m["Div"],
+                     "Partita": f"{m['HomeTeam']} - {m['AwayTeam']}", "Gol": f"{m['lam']:.1f}-{m['mu']:.1f}",
+                     **{s: 1 / (P * selection_mask(s)).sum() for s in sels}})
+    return pd.DataFrame(rows)
+
+
+def cmd_lista(args):
+    taken_at = dt.datetime.now(dt.timezone.utc)
+    try:
+        matches, source, raw_files = build_matches(args.leagues, args.start, args.days, args.source, args.fixtures)
+    except ValueError as e:
+        sys.exit(str(e))
 
     wdir = args.root / str(args.start)
     wdir.mkdir(parents=True, exist_ok=True)
     matches.to_csv(wdir / "partite.csv", index=False)
 
-    sheet = ["1", "X", "2", "1X", "X2", "U2.5", "O2.5", "GG", "NG", "1+O1.5", "2+O1.5"]
     matches = load_matches(wdir)
-    rows = []
-    for _, m in matches.iterrows():
-        P = score_grid(m["lam"], m["mu"])
-        rows.append({"Ora IT": kickoff_it(m).strftime("%d/%m %H:%M"), "Lega": m["Div"], "Partita": m["Partita"],
-                     "Gol": f"{m['lam']:.1f}-{m['mu']:.1f}",
-                     **{s: 1 / (P * selection_mask(s)).sum() for s in sheet}})
-    print(f"\nQuote eque (senza margine) · {len(rows)} partite · salvate in {wdir}/partite.csv\n")
-    print(pd.DataFrame(rows).to_string(index=False, float_format="{:.2f}".format))
+    sheet = fair_sheet(matches)
+    print(f"\nQuote eque (senza margine) · {len(sheet)} partite · salvate in {wdir}/partite.csv\n")
+    print(sheet.to_string(index=False, float_format="{:.2f}".format))
     print("\nGioca solo dove il tuo book paga più della quota equa (o quasi). Poi: python weekend.py valuta")
     if not args.no_db:
         save_to_db(matches, source, raw_files, taken_at)
@@ -407,26 +426,40 @@ def build_ticket(menu: pd.DataFrame, legs: int, lo: float, hi: float, exclude: s
     return pd.DataFrame(picked)
 
 
-def cmd_proponi(args):
-    wdir = weekend_dir(args.root, args.weekend)
-    matches = load_matches(wdir)
-    if "AvgH" not in matches:
-        sys.exit("partite.csv è di una versione vecchia: rilancia 'python weekend.py lista'.")
-    menu = weekend_menu(matches, after=pd.Timestamp.now() + pd.Timedelta(minutes=30))
+def propose_tickets(matches: pd.DataFrame, min_prob: float = 0.40, max_prob: float = 0.88,
+                    after: pd.Timestamp | None = None) -> list[tuple[str, pd.DataFrame]] | None:
+    """Schedine proposte (una per profilo di PROFILES, partite tutte diverse) per le partite che iniziano
+    dopo 'after' (default: tra 30 minuti). None se non resta nessuna partita da giocare."""
+    matches = matches.assign(Partita=matches["HomeTeam"] + " - " + matches["AwayTeam"])
+    menu = weekend_menu(matches, after=after if after is not None else pd.Timestamp.now() + pd.Timedelta(minutes=30))
     if menu.empty:
-        sys.exit("Nessuna partita ancora da giocare in questo weekend: rilancia 'python weekend.py lista'.")
-    menu = menu[(menu["Prob"] >= args.min_prob) & (menu["Prob"] <= args.max_prob)]
-
-    print(f"\nWeekend {wdir.name} · proposte da {args.stake:.0f} euro, alternative tra loro "
-          f"(partite tutte diverse: puoi anche dividere i {args.stake:.0f} euro su due).")
-    print("Quote con * = stimate: gioca la partita solo se il tuo book paga almeno quella quota, "
-          "altrimenti scegline un'altra (notebook, sezione 'Cerca giocate').")
-    used, saved = set(), []
+        return None
+    menu = menu[(menu["Prob"] >= min_prob) & (menu["Prob"] <= max_prob)]
+    used, out = set(), []
     for name, legs, lo, hi in PROFILES:
         t = build_ticket(menu, legs, lo, hi, used)
         if len(t) < legs:
             continue
         used |= set(t["Partita"])
+        out.append((name, t))
+    return out
+
+
+def cmd_proponi(args):
+    wdir = weekend_dir(args.root, args.weekend)
+    matches = load_matches(wdir)
+    if "AvgH" not in matches:
+        sys.exit("partite.csv è di una versione vecchia: rilancia 'python weekend.py lista'.")
+    tickets = propose_tickets(matches, args.min_prob, args.max_prob)
+    if tickets is None:
+        sys.exit("Nessuna partita ancora da giocare in questo weekend: rilancia 'python weekend.py lista'.")
+
+    print(f"\nWeekend {wdir.name} · proposte da {args.stake:.0f} euro, alternative tra loro "
+          f"(partite tutte diverse: puoi anche dividere i {args.stake:.0f} euro su due).")
+    print("Quote con * = stimate: gioca la partita solo se il tuo book paga almeno quella quota, "
+          "altrimenti scegline un'altra (notebook, sezione 'Cerca giocate').")
+    saved = []
+    for name, t in tickets:
         q, p = t["Quota"].prod(), t["Prob"].prod()
         ev = q * p - 1
         print(f"\n{name.upper()} · quota {q:.2f} · vincita {args.stake * q:.2f} euro · "

@@ -1,0 +1,7 @@
+.git
+.env
+data
+raw
+schedine
+logs
+__pycache__
