@@ -45,7 +45,7 @@ Prova senza internet: `python bet_model.py --demo` (dati inventati, solo per ver
 
 ## Database (Postgres in Docker)
 
-Storico di partite, quote e (in seguito) calciatori, più le rilevazioni del venerdì, in un Postgres locale.
+Storico di partite, quote e calciatori, più le rilevazioni del venerdì, in un Postgres locale.
 Serve Docker Desktop (Windows/Mac) o Docker Engine (Linux).
 
 ```bash
@@ -65,6 +65,22 @@ Le altre fonti chiamano le squadre in modo diverso ("Inter Milan" contro "Inter"
 in automatico vanno controllati con `python -m db alias` e corretti con
 `python -m db alias the-odds-api "Inter Milan" Inter` (`--nuova` per una squadra che football-data non ha,
 come quelle di Champions).
+
+### Calciatori (storico Transfermarkt)
+
+```bash
+python -m db import-transfermarkt --download   # dopo import-football-data; scarica qualche centinaio di MB
+```
+
+Importa da [transfermarkt-datasets](https://github.com/dcaribou/transfermarkt-datasets) giocatori, presenze
+(minuti, gol, assist, cartellini), titolari e valori di mercato dei sei campionati dal 2016/17. Se il download
+non va, si possono scaricare i CSV da Kaggle ("transfermarkt player scores") e passare la cartella con
+`--dir PERCORSO`. Partite e squadre si abbinano da sole a quelle di football-data (data e risultato); se ne
+abbina meno del 90% il comando lo dice. La vista `v_player_match` dà una riga per giocatore e partita, con il
+valore di mercato più recente prima della partita.
+
+Limite: il dataset non si aggiorna più da luglio 2026, quindi copre fino al 2025/26. La stagione in corso
+arriverà da un'altra fonte.
 
 Tabelle e viste: `db/sql/`. Per leggere i dati (notebook, frontend) conviene partire dalle viste:
 `v_matches` (una riga per partita), `v_odds_wide` (quote e probabilità eque per fase e bookmaker),
