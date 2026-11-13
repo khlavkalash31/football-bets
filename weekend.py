@@ -152,15 +152,30 @@ def load_config(path: Path = CONFIG_FILE) -> dict[str, str]:
     return {k: v for k, v in cfg.items() if v}
 
 
-def fetch_odds_api(key: str, divs: list[str], start: dt.date, days: int) -> pd.DataFrame:
-    """Quote 1X2 e U/O 2.5 dei bookmaker europei, nello stesso formato di fixtures.csv (2 crediti per lega)."""
+def save_raw(source: str, name: str, data: bytes) -> Path | None:
+    """Copia del download in raw/ (vedi db/raw.py): le quote di oggi domani non si possono più riscaricare."""
+    try:
+        from db import raw
+        return raw.save(source, name, data)
+    except Exception as e:  # disco pieno, permessi: il weekend va avanti lo stesso
+        print(f"  (copia in raw/ non salvata: {e})", file=sys.stderr)
+        return None
+
+
+def fetch_odds_api(key: str, divs: list[str], start: dt.date, days: int,
+                   raw_files: list | None = None) -> pd.DataFrame:
+    """Quote 1X2 e U/O 2.5 dei bookmaker europei, nello stesso formato di fixtures.csv (2 crediti per lega).
+    Se raw_files è una lista, ci aggiunge (lega, file grezzo salvato) per ogni risposta."""
     rows = []
     for div in [d for d in divs if d in ODDS_API_SPORTS]:
         query = urllib.parse.urlencode({
             "apiKey": key, "regions": "eu", "markets": "h2h,totals", "oddsFormat": "decimal",
             "commenceTimeFrom": f"{start}T00:00:00Z", "commenceTimeTo": f"{start + dt.timedelta(days=days)}T00:00:00Z"})
         with urllib.request.urlopen(f"{ODDS_API_URL.format(sport=ODDS_API_SPORTS[div])}?{query}", timeout=30) as r:
-            events, left = json.load(r), r.headers.get("x-requests-remaining")
+            body, left = r.read(), r.headers.get("x-requests-remaining")
+        events = json.loads(body)
+        if (saved := save_raw("the-odds-api", f"{div}.json", body)) and raw_files is not None:
+            raw_files.append((div, saved))
         print(f"  The Odds API {div}: {len(events)} partite, crediti rimasti {left}", file=sys.stderr)
         for ev in events:
             home, away = ev["home_team"], ev["away_team"]
@@ -189,7 +204,9 @@ def fetch_fixtures(path: Path | None) -> pd.DataFrame:
         return pd.read_csv(path, encoding="utf-8-sig")
     req = urllib.request.Request(FIXTURES_URL, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=30) as r:
-        return pd.read_csv(io.BytesIO(r.read()), encoding="utf-8-sig")
+        body = r.read()
+    save_raw("football-data", "fixtures.csv", body)
+    return pd.read_csv(io.BytesIO(body), encoding="utf-8-sig")
 
 
 def weekend_dir(root: Path, name: str | None) -> Path:
@@ -217,17 +234,38 @@ def find_match(matches: pd.DataFrame, query: str) -> pd.Series:
 
 # ---------------------------------------------------------------- comandi
 
+def save_to_db(matches: pd.DataFrame, source: str, raw_files: list, taken_at: dt.datetime) -> None:
+    """Rilevazione del giorno nel database (solo se nel .env c'è DATABASE_URL): quote di ogni bookmaker,
+    quote medie e probabilità. Se il database non risponde, il weekend va avanti lo stesso."""
+    try:
+        import db
+        from db import snapshot
+        if not db.db_configured():
+            return
+        with db.connect() as conn:
+            n_odds = sum(snapshot.ingest_odds_api(conn, path, div, taken_at) for div, path in raw_files)
+            n = snapshot.save_weekend(conn, matches, source, taken_at)
+        print(f"\nSalvate nel database {n} partite" + (f" e {n_odds} quote dei bookmaker." if n_odds else "."))
+    except Exception as e:
+        print(f"\nDatabase non aggiornato ({type(e).__name__}: {e}). Postgres è avviato? (docker compose up -d)")
+
+
 def cmd_lista(args):
     key = load_config().get("ODDS_API_KEY")
+    taken_at = dt.datetime.now(dt.timezone.utc)
+    raw_files: list = []
+    source = "football-data"
     if args.source == "odds-api" or (args.source == "auto" and key and args.fixtures is None):
         if not key:
             sys.exit(f"Manca ODDS_API_KEY in {CONFIG_FILE}.")
         try:
-            fx = fetch_odds_api(key, args.leagues, args.start, args.days)
+            fx = fetch_odds_api(key, args.leagues, args.start, args.days, raw_files)
+            source = "the-odds-api"
         except Exception as e:  # chiave errata, crediti finiti, rete: meglio quote vecchie che niente
             if args.source == "odds-api":
                 raise
             print(f"The Odds API non disponibile ({e}): uso football-data, senza Champions League.")
+            raw_files = []
             fx = fetch_fixtures(args.fixtures)
     else:
         fx = fetch_fixtures(args.fixtures)
@@ -263,6 +301,8 @@ def cmd_lista(args):
     print(f"\nQuote eque (senza margine) · {len(rows)} partite · salvate in {wdir}/partite.csv\n")
     print(pd.DataFrame(rows).to_string(index=False, float_format="{:.2f}".format))
     print("\nGioca solo dove il tuo book paga più della quota equa (o quasi). Poi: python weekend.py valuta")
+    if not args.no_db:
+        save_to_db(matches, source, raw_files, taken_at)
 
 
 def cmd_valuta(args):
@@ -416,6 +456,7 @@ def main():
     p.add_argument("--source", choices=["auto", "odds-api", "football-data"], default="auto",
                    help="auto = The Odds API se c'è ODDS_API_KEY, altrimenti football-data")
     p.add_argument("--fixtures", type=Path, help="fixtures.csv locale invece del download")
+    p.add_argument("--no-db", action="store_true", help="non salvare nel database anche se DATABASE_URL è impostato")
     p.set_defaults(func=cmd_lista)
 
     p = sub.add_parser("valuta", help="inserisci le quote del tuo book")

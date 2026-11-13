@@ -43,6 +43,37 @@ Prova senza internet: `python bet_model.py --demo` (dati inventati, solo per ver
 | `--max-odds` | 6.0 | evita le quote alte (longshot bias) |
 | `--xi` | 0.0019 | decadimento dei pesi per giorno |
 
+## Database (Postgres in Docker)
+
+Storico di partite, quote e (in seguito) calciatori, più le rilevazioni del venerdì, in un Postgres locale.
+Serve Docker Desktop (Windows/Mac) o Docker Engine (Linux).
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env               # poi scegli POSTGRES_PASSWORD e scrivila anche in DATABASE_URL
+docker compose up -d               # avvia Postgres (porta 5432, solo da questo PC)
+python -m db migrate               # crea le tabelle
+python -m db import-football-data --download   # risultati e quote dal 2016/17, sei campionati
+python -m db stato                 # quante righe ci sono
+```
+
+Da quel momento `python weekend.py lista` salva anche nel database le quote di ogni bookmaker
+(The Odds API), le quote medie e le probabilità, con data e ora (`--no-db` per saltare). Se Postgres
+è spento il weekend funziona lo stesso. Ogni download resta inoltre in `raw/` così come è arrivato.
+
+Le altre fonti chiamano le squadre in modo diverso ("Inter Milan" contro "Inter"): gli abbinamenti fatti
+in automatico vanno controllati con `python -m db alias` e corretti con
+`python -m db alias the-odds-api "Inter Milan" Inter` (`--nuova` per una squadra che football-data non ha,
+come quelle di Champions).
+
+Tabelle e viste: `db/sql/`. Per leggere i dati (notebook, frontend) conviene partire dalle viste:
+`v_matches` (una riga per partita), `v_odds_wide` (quote e probabilità eque per fase e bookmaker),
+`v_open_close` (apertura contro chiusura, per CLV e log loss), `v_latest_snapshot`. Da pandas o Streamlit
+(SQLAlchemy) l'indirizzo va scritto `postgresql+psycopg://...`.
+
+Per spostare il database in cloud basta lo stesso `docker-compose.yml` su un altro server, oppure un Postgres
+gestito: cambia solo `DATABASE_URL`.
+
 ## Limiti noti
 
 - Le neopromosse vengono ignorate finché non hanno 8 partite nella finestra di addestramento.
