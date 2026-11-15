@@ -8,6 +8,8 @@
     python -m db alias the-odds-api "Inter Milan" Inter  # corregge (o conferma) un abbinamento
     python -m db alias the-odds-api "Club Brugge" "Club Brugge" --nuova  # squadra che football-data non ha
     python -m db import-transfermarkt --download  # giocatori, presenze, titolari, valori (fino al 2025/26)
+    python -m db import-understat                 # stagione in corso da Understat: xG, minuti, titolari
+    python -m db import-understat --from 2016     # anche le passate (lungo: migliaia di pagine, riprende da dove era)
     python -m db stato                            # righe per tabella
 """
 from __future__ import annotations
@@ -72,6 +74,43 @@ def cmd_import_transfermarkt(args):
     if stats["partite Transfermarkt"] and stats["partite abbinate"] < 0.9 * stats["partite Transfermarkt"]:
         print("Meno del 90% delle partite abbinate: mancano stagioni di football-data? "
               "(python -m db import-football-data --download)")
+
+
+def cmd_import_understat(args):
+    from . import understat as us
+
+    last = us.current_season()
+    seasons = range(args.first_season if args.first_season is not None else last, last + 1)
+    client = None if args.offline else us.Client()
+    leagues = [c for c in args.leagues if c in us.LEAGUES]
+    print(f"{'':<4} {'stag.':<6} {'giocate':>7} {'abbinate':>8} {'con gioc.':>9} {'collegati':>9} {'nuovi':>6}")
+    low = []
+    with connect() as conn:
+        for season in seasons:
+            for comp in leagues:
+                try:
+                    s = us.import_season(conn, client, comp, season)
+                except ValueError as e:
+                    conn.rollback()
+                    print(f"{comp:<4} {season:<6} {e}")
+                    continue
+                except us.SiteError as e:  # sito giù: inutile continuare con gli altri campionati
+                    conn.rollback()
+                    print(f"{comp:<4} {season:<6} {e}")
+                    return
+                except Exception as e:  # rete, sito cambiato...: si passa alla stagione successiva
+                    conn.rollback()
+                    print(f"{comp:<4} {season:<6} errore {type(e).__name__}: {e}")
+                    continue
+                print(f"{comp:<4} {season:<6} {s['partite giocate']:>7} {s['abbinate']:>8} {s['con giocatori']:>9} "
+                      f"{s['giocatori collegati']:>9} {s['giocatori nuovi']:>6}")
+                if s["partite giocate"] and s["abbinate"] < 0.9 * s["partite giocate"]:
+                    low.append(f"{comp} {season}")
+    if low:
+        print(f"Meno del 90% delle partite abbinate in {', '.join(low)}: aggiorna prima i risultati "
+              "(python -m db import-football-data --download).")
+    if "P1" in args.leagues:
+        print("Portogallo (P1): Understat non lo copre.")
 
 
 def cmd_alias(args):
@@ -147,6 +186,12 @@ def main():
     p.add_argument("--dir", type=Path, help="cartella con i CSV già scaricati (es. da Kaggle)")
     p.add_argument("--first-season", type=int, default=2016, help="prima stagione (2016 = 2016/17)")
     p.set_defaults(func=cmd_import_transfermarkt)
+
+    p = sub.add_parser("import-understat", help="xG e presenze da Understat (default: stagione in corso)")
+    p.add_argument("--from", dest="first_season", type=int, help="prima stagione (2016 = 2016/17)")
+    p.add_argument("--leagues", nargs="+", default=list(LEAGUES))
+    p.add_argument("--offline", action="store_true", help="usa solo i file già scaricati in raw/understat")
+    p.set_defaults(func=cmd_import_understat)
 
     p = sub.add_parser("alias", help="controlla o correggi i nomi squadra delle altre fonti")
     p.add_argument("source", nargs="?", help="fonte, es. the-odds-api")

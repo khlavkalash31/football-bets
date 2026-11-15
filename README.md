@@ -79,8 +79,25 @@ non va, si possono scaricare i CSV da Kaggle ("transfermarkt player scores") e p
 abbina meno del 90% il comando lo dice. La vista `v_player_match` dà una riga per giocatore e partita, con il
 valore di mercato più recente prima della partita.
 
-Limite: il dataset non si aggiorna più da luglio 2026, quindi copre fino al 2025/26. La stagione in corso
-arriverà da un'altra fonte.
+Limite: il dataset non si aggiorna più da luglio 2026, quindi copre fino al 2025/26.
+
+### Stagione in corso e xG (Understat)
+
+```bash
+python -m db import-football-data --download   # prima i risultati aggiornati
+python -m db import-understat                  # poi xG, minuti e titolari della stagione in corso
+```
+
+Da [Understat](https://understat.com) arrivano gli xG di squadra (in `matches`) e, per ogni giocatore e
+partita, minuti, titolare, gol, assist, xG e xA. Copre Serie A, Liga, Premier, Ligue 1 e Bundesliga (il
+Portogallo no). I giocatori si collegano a quelli di Transfermarkt per nome dentro la stessa squadra; chi non
+si trova (per esempio un acquisto dell'estate) viene creato. Dove una presenza c'è già da Transfermarkt si
+aggiungono solo xG e xA.
+
+Ogni partita si scarica una sola volta (resta in `raw/understat/`), quindi rilanciarlo ogni settimana prende
+solo le nuove: conviene farlo dopo l'import di football-data, prima di preparare le giocate. Con
+`--from 2016` aggiunge gli xG delle stagioni passate: sono circa 19.000 pagine (più di 5 ore, una al secondo);
+se lo interrompi riparte da dove era.
 
 Tabelle e viste: `db/sql/`. Per leggere i dati (notebook, frontend) conviene partire dalle viste:
 `v_matches` (una riga per partita), `v_odds_wide` (quote e probabilità eque per fase e bookmaker),
