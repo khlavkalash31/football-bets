@@ -57,6 +57,16 @@ def _read(path: Path, cols: list[str] | None = None) -> pd.DataFrame:
     return df[[c for c in cols if c in df.columns]] if cols else df
 
 
+def _club_names(tm_games: pd.DataFrame) -> dict[int, str]:
+    """club_id -> nome, se le colonne con i nomi ci sono."""
+    out: dict[int, str] = {}
+    for side in ("home", "away"):
+        if f"{side}_club_name" in tm_games:
+            pairs = tm_games[[f"{side}_club_id", f"{side}_club_name"]].dropna()
+            out.update({int(c): str(n) for c, n in pairs.itertuples(index=False)})
+    return out
+
+
 def match_games(tm_games: pd.DataFrame, ours: pd.DataFrame) -> tuple[pd.DataFrame, dict[int, int], list[str]]:
     """Abbina le partite Transfermarkt alle nostre.
 
@@ -81,12 +91,23 @@ def match_games(tm_games: pd.DataFrame, ours: pd.DataFrame) -> tuple[pd.DataFram
         team, n = c.most_common(1)[0]
         if n >= MIN_VOTES and n / sum(c.values()) >= MIN_SHARE:
             clubs[club] = team
+    names = _club_names(tm_games)
     teams_taken = Counter(clubs.values())
     for team, n in teams_taken.items():
-        if n > 1:  # due club sulla stessa squadra: abbinamento dubbio, li si scarta entrambi
-            for club in [c for c, t_ in clubs.items() if t_ == team]:
+        if n < 2:
+            continue
+        same = [c for c, t_ in clubs.items() if t_ == team]
+        # Una squadra può avere più id Transfermarkt (rifondazione, cambio di nome): va bene se i club
+        # non hanno mai giocato lo stesso giorno. Se sì, sono squadre diverse e l'abbinamento è dubbio.
+        days = [set(tm_games.loc[(tm_games["home_club_id"] == c) | (tm_games["away_club_id"] == c), "date"])
+                for c in same]
+        label = ", ".join(names.get(c, str(c)) for c in same)
+        if any(days[i] & days[j] for i in range(len(same)) for j in range(i + 1, len(same))):
+            for club in same:
                 del clubs[club]
-            notes.append(f"squadra {team}: più club Transfermarkt indicano la stessa squadra, scartati")
+            notes.append(f"club {label}: indicano la stessa squadra ma giocano negli stessi giorni, scartati")
+        else:
+            notes.append(f"club {label}: stessa squadra con più id Transfermarkt, tenuti tutti")
 
     g = tm_games.assign(home_team_id=tm_games["home_club_id"].map(clubs),
                         away_team_id=tm_games["away_club_id"].map(clubs)).dropna(subset=["home_team_id", "away_team_id"])
@@ -107,7 +128,8 @@ def match_games(tm_games: pd.DataFrame, ours: pd.DataFrame) -> tuple[pd.DataFram
     unmatched_clubs = set(tm_games["home_club_id"]) | set(tm_games["away_club_id"])
     unmatched_clubs -= set(clubs)
     if unmatched_clubs:
-        notes.append(f"{len(unmatched_clubs)} club Transfermarkt senza squadra abbinata (le loro partite sono saltate)")
+        label = ", ".join(sorted(names.get(c, str(c)) for c in unmatched_clubs))
+        notes.append(f"club Transfermarkt senza squadra abbinata (partite saltate): {label}")
     return games, clubs, notes
 
 
