@@ -94,6 +94,10 @@ def cmd_import_understat(args):
                     conn.rollback()
                     print(f"{comp:<4} {season:<6} {e}")
                     continue
+                except us.SiteError as e:  # sito giù: inutile continuare con gli altri campionati
+                    conn.rollback()
+                    print(f"{comp:<4} {season:<6} {e}")
+                    return
                 except Exception as e:  # rete, sito cambiato...: si passa alla stagione successiva
                     conn.rollback()
                     print(f"{comp:<4} {season:<6} errore {type(e).__name__}: {e}")

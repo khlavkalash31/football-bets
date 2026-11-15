@@ -39,6 +39,10 @@ def current_season(today: dt.date | None = None) -> int:
     return today.year if today.month >= 7 else today.year - 1
 
 
+class SiteError(RuntimeError):
+    """Understat ha risposto, ma non con i dati (manutenzione, pagina di errore)."""
+
+
 class Client:
     """Scarica dalle API JSON che usano le pagine di Understat (servono i cookie della home)."""
 
@@ -62,18 +66,28 @@ class Client:
         finally:
             self._last = time.monotonic()
 
-    def get_json(self, path: str) -> bytes:
+    def get_json(self, path: str, name: str) -> Path:
+        """Scarica e salva in raw/. Se la risposta non è JSON (sito in manutenzione, pagina di errore)
+        la salva come .html, così non viene scambiata per dati, e si ferma."""
         if not self._ready:
             self._get("/", ajax=False)
             self._ready = True
-        return self._get(path)
+        data = self._get(path)
+        try:
+            json.loads(data)
+        except ValueError:
+            bad = raw.save(SOURCE, name.replace(".json", ".html"), data)
+            text = " ".join(re.sub(r"<[^>]+>", " ", data.decode("utf-8", "replace")).split())[-120:]
+            raise SiteError(f"Understat non ha dato i dati ('{text}'): forse è in manutenzione, riprova più tardi. "
+                            f"Risposta salvata in {bad}") from None
+        return raw.save(SOURCE, name, data)
 
     def league(self, competition: str, season: int) -> Path:
-        data = self.get_json(f"/getLeagueData/{LEAGUES[competition]}/{season}")
-        return raw.save(SOURCE, f"league_{LEAGUES[competition]}_{season}.json", data)
+        return self.get_json(f"/getLeagueData/{LEAGUES[competition]}/{season}",
+                             f"league_{LEAGUES[competition]}_{season}.json")
 
     def match(self, game_id: int) -> Path:
-        return raw.save(SOURCE, f"match_{game_id}.json", self.get_json(f"/getMatchData/{game_id}"))
+        return self.get_json(f"/getMatchData/{game_id}", f"match_{game_id}.json")
 
 
 def cached_match(game_id: int) -> Path | None:
@@ -232,7 +246,7 @@ def import_season(conn, client: Client | None, competition: str, season: int, lo
         files = sorted(raw.raw_dir().glob(f"{SOURCE}/*/*_league_{LEAGUES[competition]}_{season}.json"))
         if not files:
             raise ValueError("nessun file scaricato")
-        league_path = files[-1]
+        league_path = files[-1]  # i file che non erano JSON sono salvati come .html e qui non compaiono
     us = parse_league(league_path, competition)
     played = us[us["played"]]
     stats = {"partite giocate": len(played), "abbinate": 0, "con giocatori": 0, "giocatori collegati": 0,
@@ -279,6 +293,8 @@ def import_season(conn, client: Client | None, competition: str, season: int, lo
                     continue
                 try:
                     path = client.match(r.game_id)
+                except SiteError:
+                    raise
                 except Exception as e:  # una partita che non si scarica non blocca le altre
                     log(f"  nota: partita Understat {r.game_id} non scaricata ({type(e).__name__})")
                     continue
