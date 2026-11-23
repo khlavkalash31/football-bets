@@ -15,7 +15,8 @@ pages = [
     st.Page("pagine/proposte.py", title="Schedine proposte", icon="🎟️"),
 ]
 if core.db_ok():
-    pages += [st.Page("pagine/storico.py", title="Storico", icon="📈"),
+    pages += [st.Page("pagine/verifica.py", title="Verifica previsioni", icon="🎯"),
+              st.Page("pagine/storico.py", title="Storico quote", icon="📈"),
               st.Page("pagine/database.py", title="Database", icon="🗄️")]
 nav = st.navigation(pages)
 

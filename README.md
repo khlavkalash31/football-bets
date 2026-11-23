@@ -122,3 +122,20 @@ Storico. Per averlo anche online serve un database in cloud (vedi sopra) e il su
 - Le quote "di apertura" di football-data sono rilevate il venerdì (o il martedì per le infrasettimanali),
   non sono necessariamente quelle disponibili su un book ADM.
 - Nessun dato su infortuni, formazioni, xG: è una baseline, non un modello competitivo.
+
+### Verifica delle previsioni (storico contro risultati reali)
+
+Ogni `python weekend.py lista` salva nel database le probabilità del giorno. Dopo le partite:
+
+```bash
+python -m db risultati     # risultati: CSV della stagione da football-data + Champions da The Odds API (2 crediti)
+python -m db verifica      # riepilogo nel terminale (--quale ultima per l'ultima rilevazione prima del fischio)
+```
+
+`invio.py` lo fa da solo a ogni invio (giovedì e lunedì), se il database è configurato. Nell'app la pagina
+**Verifica previsioni** mostra: log loss e Brier della nostra rilevazione contro apertura e chiusura (con
+intervallo di confidenza del distacco), andamento settimana per settimana, risultati per competizione,
+calibrazione 1X2, le giocate derivate (GG, Over 1.5, multigol, combo) prevista contro uscita con z-score,
+le partite dove il mercato si è mosso di più dopo la nostra rilevazione e i risultati più inattesi.
+La vista `v_prediction_results` ha una riga per previsione fatta prima del calcio d'inizio, con risultato e
+probabilità eque di apertura e chiusura.

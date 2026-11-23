@@ -1,4 +1,3 @@
-import pandas as pd
 import streamlit as st
 
 import core
@@ -33,22 +32,4 @@ st.dataframe(tab, hide_index=True, width="stretch", column_config={
     "Log loss apertura": f3, "Log loss chiusura": f3,
     "Margine apertura": st.column_config.NumberColumn(format="percent")})
 
-st.subheader("Le nostre rilevazioni del venerdì")
-ours = core.query("""
-    WITH p AS (SELECT DISTINCT ON (match_id) * FROM predictions WHERE model_version = 'market-v1'
-               ORDER BY match_id, created_at)
-    SELECT oc.competition, oc.result, p.p_home::float AS p_h, p.p_draw::float AS p_d, p.p_away::float AS p_a,
-           oc.close_fair_h::float AS c_h, oc.close_fair_d::float AS c_d, oc.close_fair_a::float AS c_a
-    FROM p JOIN v_open_close oc USING (match_id)
-    WHERE oc.result IS NOT NULL AND oc.close_h IS NOT NULL""")
-if ours.empty:
-    st.info("Ancora nessuna partita rilevata con 'weekend.py lista' che abbia anche risultato e quota di chiusura. "
-            "Si riempie importando i CSV di football-data dopo il weekend.")
-else:
-    res = pd.DataFrame({
-        "Partite": [len(ours)],
-        "Log loss nostra rilevazione": [core.logloss(ours[["p_h", "p_d", "p_a"]], ours["result"]).mean()],
-        "Log loss chiusura": [core.logloss(ours[["c_h", "c_d", "c_a"]], ours["result"]).mean()],
-    })
-    st.dataframe(res, hide_index=True, column_config={"Log loss nostra rilevazione": f3, "Log loss chiusura": f3})
-    st.caption("Con poche centinaia di partite la differenza è quasi tutta rumore.")
+st.caption("Le nostre rilevazioni contro i risultati veri sono nella pagina **Verifica previsioni**.")

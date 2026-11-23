@@ -8,6 +8,8 @@
     python -m db alias the-odds-api "Inter Milan" Inter  # corregge (o conferma) un abbinamento
     python -m db alias the-odds-api "Club Brugge" "Club Brugge" --nuova  # squadra che football-data non ha
     python -m db import-transfermarkt --download  # giocatori, presenze, titolari, valori (fino al 2025/26)
+    python -m db risultati                        # risultati delle partite previste (football-data + Champions)
+    python -m db verifica                         # previsioni salvate contro risultati reali
     python -m db stato                            # righe per tabella
 """
 from __future__ import annotations
@@ -114,6 +116,34 @@ def cmd_alias(args):
     print("\nSe uno è sbagliato: python -m db alias FONTE \"NOME NELLA FONTE\" \"NOME FOOTBALL-DATA\"")
 
 
+def cmd_risultati(args):
+    import weekend
+
+    from .risultati import update_all
+
+    key = weekend.load_config().get("ODDS_API_KEY")
+    with connect() as conn:
+        update_all(conn, args.leagues, args.odds_api, key)
+
+
+def cmd_verifica(args):
+    import pandas as pd
+
+    import valutazione as v
+
+    with connect() as conn:
+        df = v.load(conn, args.model)
+    d = v.score(v.pick(df, args.quale))
+    if d.empty:
+        sys.exit("Nessuna previsione con risultato: lancia prima 'python weekend.py lista' e, dopo le partite, "
+                 "'python -m db risultati'.")
+    print(f"{len(d)} partite, {args.quale} rilevazione, dal {d['match_date'].min():%d/%m/%Y} al {d['match_date'].max():%d/%m/%Y}\n")
+    with pd.option_context("display.width", 160, "display.float_format", "{:.4f}".format):
+        print(v.summary(d).to_string(index=False))
+        print("\nGiocate (prevista dal modello dei gol contro uscita davvero; |z| > 2 = scarto sospetto)")
+        print(v.markets(d).to_string(index=False))
+
+
 def cmd_stato(args):
     with connect() as conn, conn.cursor() as cur:
         print(f"Database: {database_url().split('@')[-1]}")
@@ -154,6 +184,17 @@ def main():
     p.add_argument("team", nargs="?", help="nome della squadra (quello di football-data)")
     p.add_argument("--nuova", action="store_true", help="crea la squadra se non esiste (es. squadre di Champions)")
     p.set_defaults(func=cmd_alias)
+
+    p = sub.add_parser("risultati", help="risultati finali delle partite su cui c'è una previsione")
+    p.add_argument("--leagues", nargs="+", default=list(LEAGUES), help="campionati da football-data")
+    p.add_argument("--odds-api", nargs="*", default=["CL"],
+                   help="competizioni da The Odds API (2 crediti l'una, ultimi 3 giorni); default CL")
+    p.set_defaults(func=cmd_risultati)
+
+    p = sub.add_parser("verifica", help="previsioni salvate contro risultati reali")
+    p.add_argument("--quale", choices=["prima", "ultima"], default="prima", help="rilevazione da valutare")
+    p.add_argument("--model", default="market-v1")
+    p.set_defaults(func=cmd_verifica)
 
     sub.add_parser("stato", help="righe per tabella").set_defaults(func=cmd_stato)
 
