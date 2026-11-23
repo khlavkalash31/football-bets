@@ -254,6 +254,21 @@ def window(mode: str, today: dt.date) -> tuple[dt.date, dt.date]:
     return max(start, today), end
 
 
+def aggiorna_risultati() -> None:
+    """Risultati delle partite già previste (storico per 'Verifica previsioni'), solo se c'è il database.
+    Il giovedì prende anche la Champions di martedì e mercoledì (The Odds API: ultimi 3 giorni, 2 crediti).
+    Se qualcosa non va l'email parte lo stesso."""
+    try:
+        import db
+        from db.risultati import update_all
+        if not db.db_configured():
+            return
+        with db.connect() as conn:
+            update_all(conn, list(LEAGUES), ["CL"], weekend.load_config().get("ODDS_API_KEY"))
+    except Exception as e:
+        print(f"Risultati non aggiornati ({type(e).__name__}: {e}).", flush=True)
+
+
 def invia(args) -> None:
     leagues, *_, min_matches = MODES[args.modo]
     if args.start:
@@ -265,6 +280,8 @@ def invia(args) -> None:
         return
     args.start, days = start, (end - start).days + 1
     print(f"Partite dal {start} al {end}", flush=True)
+    if not args.dry_run:
+        aggiorna_risultati()
     root = Path("schedine")
     wdir = root / str(args.start)
     existed = wdir.exists()
