@@ -142,3 +142,23 @@ def merge_team(cur, old: int, new: int) -> None:
     for table in ("player_match", "predicted_lineups", "team_elo", "team_aliases"):
         cur.execute(f"UPDATE {table} SET team_id = %s WHERE team_id = %s", (new, old))
     cur.execute("DELETE FROM teams WHERE team_id = %s", (old,))
+
+
+def copy_upsert(cur, table: str, cols: list[str], rows: list[tuple], key: list[str], extra: dict | None = None,
+                update: list[str] | None = None) -> None:
+    """Molte righe in poco tempo: COPY in una tabella temporanea, poi INSERT ... ON CONFLICT DO UPDATE.
+
+    update: colonne da aggiornare se la riga c'è già (default tutte tranne la chiave)."""
+    if not rows:
+        return
+    extra = extra or {}
+    cols, rows = cols + list(extra), [(*r, *extra.values()) for r in rows]
+    tmp = f"tmp_{table}"
+    cur.execute(f"CREATE TEMP TABLE {tmp} (LIKE {table} INCLUDING DEFAULTS) ON COMMIT DROP")
+    with cur.copy(f"COPY {tmp} ({', '.join(cols)}) FROM STDIN") as cp:
+        for r in rows:
+            cp.write_row(r)
+    upd = ", ".join(f"{c} = EXCLUDED.{c}" for c in (update or [c for c in cols if c not in key]))
+    cur.execute(f"""INSERT INTO {table} ({', '.join(cols)}) SELECT {', '.join(cols)} FROM {tmp}
+                    ON CONFLICT ({', '.join(key)}) DO UPDATE SET {upd}""")
+    cur.execute(f"DROP TABLE {tmp}")

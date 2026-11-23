@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import raw
+from . import raw, store
 
 SOURCE = "transfermarkt"
 BASE_URL = "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/{name}.csv.gz"
@@ -192,7 +192,7 @@ def import_all(conn, files: dict[str, Path], first_season: int = 2016) -> dict[s
         ap = ap.dropna(subset=["pid"]).drop_duplicates(["match_id", "pid"])
         rows = [(int(r.match_id), int(r.pid), int(r.team_id), bool(r.started), _i(r.minutes_played), _i(r.goals),
                  _i(r.assists), _i(r.yellow_cards), _i(r.red_cards)) for r in ap.itertuples()]
-        _copy_upsert(cur, "player_match", ["match_id", "player_id", "team_id", "started", "minutes", "goals", "assists",
+        store.copy_upsert(cur, "player_match", ["match_id", "player_id", "team_id", "started", "minutes", "goals", "assists",
                                            "yellow", "red"], rows, key=["match_id", "player_id"], extra={"source": SOURCE})
         stats["presenze"] = len(rows)
 
@@ -201,7 +201,7 @@ def import_all(conn, files: dict[str, Path], first_season: int = 2016) -> dict[s
         pv["date"] = pd.to_datetime(pv["date"]).dt.date
         pv = pv[pv["date"] >= dt.date(first_season - 1, 1, 1)].drop_duplicates(["player_id", "date"], keep="last")
         rows = [(int(pid[r.player_id]), r.date, int(r.market_value_in_eur)) for r in pv.itertuples()]
-        _copy_upsert(cur, "player_value", ["player_id", "value_date", "value_eur"], rows, key=["player_id", "value_date"])
+        store.copy_upsert(cur, "player_value", ["player_id", "value_date", "value_eur"], rows, key=["player_id", "value_date"])
         stats["valori di mercato"] = len(rows)
     conn.commit()
     return stats
@@ -232,23 +232,6 @@ def _upsert_players(cur, pl: pd.DataFrame) -> pd.Series:
             cur.execute("INSERT INTO player_aliases (source, source_id, player_id) VALUES (%s, %s, %s)",
                         (SOURCE, str(tm_id), known[tm_id]))
     return pd.Series(known)[lambda s: s.index.isin(pl["player_id"])]
-
-
-def _copy_upsert(cur, table: str, cols: list[str], rows: list[tuple], key: list[str], extra: dict | None = None) -> None:
-    """Molte righe in poco tempo: COPY in una tabella temporanea, poi INSERT ... ON CONFLICT DO UPDATE."""
-    if not rows:
-        return
-    extra = extra or {}
-    cols, rows = cols + list(extra), [(*r, *extra.values()) for r in rows]
-    tmp = f"tmp_{table}"
-    cur.execute(f"CREATE TEMP TABLE {tmp} (LIKE {table} INCLUDING DEFAULTS) ON COMMIT DROP")
-    with cur.copy(f"COPY {tmp} ({', '.join(cols)}) FROM STDIN") as cp:
-        for r in rows:
-            cp.write_row(r)
-    upd = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in key)
-    cur.execute(f"""INSERT INTO {table} ({', '.join(cols)}) SELECT {', '.join(cols)} FROM {tmp}
-                    ON CONFLICT ({', '.join(key)}) DO UPDATE SET {upd}""")
-    cur.execute(f"DROP TABLE {tmp}")
 
 
 def read_local(path: Path) -> dict[str, Path]:
