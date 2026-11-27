@@ -12,6 +12,7 @@
     python -m db verifica                         # previsioni salvate contro risultati reali
     python -m db import-understat                 # stagione in corso da Understat: xG, minuti, titolari
     python -m db import-understat --from 2016     # anche le passate (lungo: migliaia di pagine, riprende da dove era)
+    python -m db import-fotmob                    # stagione in corso da FotMob: xG (Opta), minuti, titolari, anche P1
     python -m db stato                            # righe per tabella
 """
 from __future__ import annotations
@@ -80,12 +81,22 @@ def cmd_import_transfermarkt(args):
 
 def cmd_import_understat(args):
     from . import understat as us
+    _import_xg(args, us, "Understat")
 
+
+def cmd_import_fotmob(args):
+    from . import fotmob
+    _import_xg(args, fotmob, "FotMob")
+
+
+def _import_xg(args, us, label: str):
+    """Import stagione per stagione da una fonte di xG (moduli understat e fotmob: stessa interfaccia)."""
     last = us.current_season()
     seasons = range(args.first_season if args.first_season is not None else last, last + 1)
     client = None if args.offline else us.Client()
     leagues = [c for c in args.leagues if c in us.LEAGUES]
-    print(f"{'':<4} {'stag.':<6} {'giocate':>7} {'abbinate':>8} {'con gioc.':>9} {'collegati':>9} {'nuovi':>6}")
+    print(f"{'':<4} {'stag.':<6} {'giocate':>7} {'abbinate':>8} {'con xG':>7} {'con gioc.':>9} {'collegati':>9} "
+          f"{'nuovi':>6}")
     low = []
     with connect() as conn:
         for season in seasons:
@@ -104,15 +115,17 @@ def cmd_import_understat(args):
                     conn.rollback()
                     print(f"{comp:<4} {season:<6} errore {type(e).__name__}: {e}")
                     continue
-                print(f"{comp:<4} {season:<6} {s['partite giocate']:>7} {s['abbinate']:>8} {s['con giocatori']:>9} "
+                print(f"{comp:<4} {season:<6} {s['partite giocate']:>7} {s['abbinate']:>8} "
+                      f"{s.get('con xG', s['abbinate']):>7} {s['con giocatori']:>9} "
                       f"{s['giocatori collegati']:>9} {s['giocatori nuovi']:>6}")
                 if s["partite giocate"] and s["abbinate"] < 0.9 * s["partite giocate"]:
                     low.append(f"{comp} {season}")
     if low:
         print(f"Meno del 90% delle partite abbinate in {', '.join(low)}: aggiorna prima i risultati "
               "(python -m db import-football-data --download).")
-    if "P1" in args.leagues:
-        print("Portogallo (P1): Understat non lo copre.")
+    missing = [c for c in args.leagues if c not in us.LEAGUES]
+    if missing:
+        print(f"{', '.join(missing)}: {label} non li copre.")
 
 
 def cmd_alias(args):
@@ -194,6 +207,12 @@ def cmd_stato(args):
                        WHERE home_goals IS NOT NULL GROUP BY 1 ORDER BY 1""")
         for c, a, b, n in cur.fetchall():
             print(f"  {c:<4} stagioni {a}-{b}: {n} partite giocate")
+        cur.execute("SELECT to_regclass('match_xg') IS NOT NULL")
+        if cur.fetchone()[0]:
+            cur.execute("""SELECT x.source, m.competition, m.season, count(*) FROM match_xg x JOIN matches m USING (match_id)
+                           GROUP BY 1, 2, 3 ORDER BY 1, 2, 3""")
+            for src, c, s, n in cur.fetchall():
+                print(f"  xG {src:<9} {c:<4} {s}: {n} partite")
 
 
 def main():
@@ -222,6 +241,12 @@ def main():
     p.add_argument("--leagues", nargs="+", default=list(LEAGUES))
     p.add_argument("--offline", action="store_true", help="usa solo i file già scaricati in raw/understat")
     p.set_defaults(func=cmd_import_understat)
+
+    p = sub.add_parser("import-fotmob", help="xG e presenze da FotMob, tutti e 6 i campionati (default: stagione in corso)")
+    p.add_argument("--from", dest="first_season", type=int, help="prima stagione (2020 = 2020/21)")
+    p.add_argument("--leagues", nargs="+", default=list(LEAGUES))
+    p.add_argument("--offline", action="store_true", help="usa solo i file già scaricati in raw/fotmob")
+    p.set_defaults(func=cmd_import_fotmob)
 
     p = sub.add_parser("alias", help="controlla o correggi i nomi squadra delle altre fonti")
     p.add_argument("source", nargs="?", help="fonte, es. the-odds-api")

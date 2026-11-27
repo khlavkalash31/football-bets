@@ -115,6 +115,8 @@ def insert_prediction(cur, match_id: int, model_version: str, created_at: dt.dat
 _MATCH_KEYS = {"odds_snapshots": ("market", "outcome", "bookmaker", "phase", "taken_at"),
                "predictions": ("model_version", "created_at"),
                "predicted_lineups": ("team_id", "player_name", "source", "taken_at"),
+               "match_xg": ("source",),
+               "player_match_xg": ("player_id", "source"),
                "player_match": ("player_id",)}
 
 
@@ -162,3 +164,55 @@ def copy_upsert(cur, table: str, cols: list[str], rows: list[tuple], key: list[s
     cur.execute(f"""INSERT INTO {table} ({', '.join(cols)}) SELECT {', '.join(cols)} FROM {tmp}
                     ON CONFLICT ({', '.join(key)}) DO UPDATE SET {upd}""")
     cur.execute(f"DROP TABLE {tmp}")
+
+
+# Fonti degli xG, dalla preferita: matches.home_xg/away_xg e player_match.xg/xa tengono la prima disponibile.
+XG_PRIORITY = ["understat", "fotmob"]
+_CAN_SET_XG = "({t}.xg_source IS NULL OR array_position(%(prio)s::text[], {t}.xg_source) >= " \
+              "array_position(%(prio)s::text[], %(src)s))"
+
+
+def write_match_xg(cur, source: str, rows: list[tuple]) -> None:
+    """rows: (match_id, home_xg, away_xg). I valori della fonte vanno in match_xg; in matches solo se la fonte
+    non ha una priorità più bassa di quella già presente."""
+    rows = [r for r in rows if r[1] is not None or r[2] is not None]
+    if not rows:
+        return
+    cur.executemany("""INSERT INTO match_xg (match_id, source, home_xg, away_xg) VALUES (%s, %s, %s, %s)
+                       ON CONFLICT (match_id, source) DO UPDATE SET home_xg = EXCLUDED.home_xg,
+                       away_xg = EXCLUDED.away_xg""", [(m, source, h, a) for m, h, a in rows])
+    cur.executemany(f"""UPDATE matches SET home_xg = %(h)s, away_xg = %(a)s, xg_source = %(src)s
+                        WHERE match_id = %(m)s AND {_CAN_SET_XG.format(t="matches")}""",
+                    [{"h": h, "a": a, "m": m, "src": source, "prio": XG_PRIORITY} for m, h, a in rows])
+
+
+PM_COLS = ["match_id", "player_id", "team_id", "started", "minutes", "goals", "assists", "xg", "xa", "yellow", "red"]
+
+
+def write_player_match(cur, source: str, rows: list[tuple]) -> None:
+    """rows: valori nell'ordine di PM_COLS. Righe nuove: si inseriscono intere. Righe di un'altra fonte (es.
+    Transfermarkt): minuti, titolari, gol... restano quelli; xG e xA si scrivono solo se la fonte non ha una
+    priorità più bassa di quella già presente. Righe della stessa fonte: si aggiornano.
+    Gli xG di ogni fonte restano comunque in player_match_xg."""
+    if not rows:
+        return
+    cur.execute("CREATE TEMP TABLE tmp_pm (LIKE player_match INCLUDING DEFAULTS) ON COMMIT DROP")
+    with cur.copy(f"COPY tmp_pm ({', '.join(PM_COLS)}, source, xg_source) FROM STDIN") as cp:
+        for r in rows:
+            has_xg = r[7] is not None or r[8] is not None
+            cp.write_row((*r, source, source if has_xg else None))
+    same = "player_match.source = EXCLUDED.source"
+    stats = ", ".join(f"{c} = CASE WHEN {same} THEN EXCLUDED.{c} ELSE player_match.{c} END"
+                      for c in PM_COLS[2:] if c not in ("xg", "xa"))
+    can = f"(EXCLUDED.xg_source IS NOT NULL AND {_CAN_SET_XG.format(t='player_match')})"
+    xg = ", ".join(f"{c} = CASE WHEN {can} THEN EXCLUDED.{c} ELSE player_match.{c} END"
+                   for c in ("xg", "xa", "xg_source"))
+    cur.execute(f"""INSERT INTO player_match ({', '.join(PM_COLS)}, source, xg_source)
+                    SELECT {', '.join(PM_COLS)}, source, xg_source FROM tmp_pm
+                    ON CONFLICT (match_id, player_id) DO UPDATE SET {stats}, {xg}""",
+                {"src": source, "prio": XG_PRIORITY})
+    cur.execute("DROP TABLE tmp_pm")
+    xrows = [(r[0], r[1], source, r[7], r[8]) for r in rows if r[7] is not None or r[8] is not None]
+    cur.executemany("""INSERT INTO player_match_xg (match_id, player_id, source, xg, xa) VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (match_id, player_id, source) DO UPDATE SET xg = EXCLUDED.xg, xa = EXCLUDED.xa""",
+                    xrows)
