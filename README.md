@@ -175,15 +175,33 @@ Senza Docker: `pip install -r requirements.txt` e `streamlit run app/app.py`.
 
 Con il database, la pagina Partite mostra l'ultima rilevazione salvata e ha un pulsante per aggiornarla
 (scarica le quote e le salva, come `weekend.py lista`). Senza database l'app scarica le quote al momento e le
-tiene in memoria un'ora: è così che gira su **Streamlit Community Cloud**, per dare un link a chi non vuole
-installare niente:
+tiene in memoria un'ora.
 
-1. su share.streamlit.io: New app, repository `football-bets`, file `app/app.py`;
-2. in Advanced settings → Secrets: `ODDS_API_KEY = "..."`;
-3. rendila privata e invita solo chi deve usarla (ogni download consuma i crediti della chiave).
+### App online (Streamlit Community Cloud, con accesso riservato)
 
-Il Postgres sul PC da lì non si raggiunge: l'app pubblicata mostra solo le partite dei prossimi giorni, senza
-Storico. Per averlo anche online serve un database in cloud (vedi sopra) e il suo `DATABASE_URL` nei secrets.
+Il Postgres sul PC dal cloud non si raggiunge, quindi l'app online legge una **copia** del database su un
+Postgres gratuito in cloud ([Neon](https://neon.com), piano Free: 1 GB). Il database vero resta quello del PC:
+la copia si sovrascrive a ogni sincronizzazione e online l'app la legge soltanto (niente pulsanti di
+aggiornamento; in basso a sinistra c'è l'ora dell'ultima copia). Si copiano partite, quote, previsioni,
+formazioni e l'anagrafica dei giocatori; presenze, valori e xG dei singoli calciatori restano sul PC.
+
+1. **Neon**: crea un progetto (regione Europa, es. Frankfurt) e copia la connection string
+   (`postgresql://...neon.tech/neondb?sslmode=require...`).
+2. Sul PC, nel `.env`: `CLOUD_DATABASE_URL=<la connection string>`, poi la prima copia:
+   `docker compose exec -T app python -m db sync-cloud`. Da lì in poi `invio.py` la aggiorna da solo a ogni invio;
+   a mano si rilancia lo stesso comando.
+3. **Streamlit**: su [share.streamlit.io](https://share.streamlit.io), accedi con GitHub, *Create app* →
+   repository `khlavkalash31/football-bets`, branch `main`, file `app/app.py`. In *Advanced settings*:
+   Python 3.12 e nei *Secrets*
+   ```toml
+   DATABASE_URL = "<la stessa connection string di Neon>"
+   ```
+   (`ODDS_API_KEY` serve solo se si vuole l'app senza database).
+4. **Accesso**: il repository è pubblico, quindi l'app nasce pubblica. Subito dopo il deploy: *Settings →
+   Sharing → Who can view this app → Only specific people can view this app*, e lì (o da *Share* in alto a
+   destra nell'app) si invitano gli indirizzi email che possono vederla: entrano con Google o con un link via
+   email. Il piano gratuito permette una sola app privata. Il codice resta pubblico su GitHub; i dati e la
+   connection string stanno solo su Neon e nei secrets.
 
 ## Limiti noti
 

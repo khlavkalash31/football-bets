@@ -15,6 +15,7 @@
     python -m db import-fotmob                    # stagione in corso da FotMob: xG (Opta), minuti, titolari, anche P1
     python -m db formazioni                       # probabili formazioni e indisponibili dei prossimi 4 giorni (FotMob)
     python -m db stato                            # righe per tabella
+    python -m db sync-cloud                       # copia per l'app online sul Postgres in cloud (CLOUD_DATABASE_URL)
 """
 from __future__ import annotations
 
@@ -28,18 +29,17 @@ from .config import ROOT, SQL_DIR, connect, database_url
 
 
 def cmd_migrate(args):
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, "
-                    "applied_at timestamptz NOT NULL DEFAULT now())")
-        cur.execute("SELECT name FROM schema_migrations")
-        done = {r[0] for r in cur.fetchall()}
-        todo = [p for p in sorted(SQL_DIR.glob("*.sql")) if p.name not in done]
-        for p in todo:
-            cur.execute(p.read_text())
-            cur.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (p.name,))
-            print(f"  applicata {p.name}")
-        conn.commit()
+    from .cloud import migrate
+
+    with connect() as conn:
+        todo = migrate(conn)
     print("Schema aggiornato." if todo else "Schema già aggiornato.")
+
+
+def cmd_sync_cloud(args):
+    from .cloud import sync
+
+    sync()
 
 
 def cmd_import_football_data(args):
@@ -286,6 +286,8 @@ def main():
     p.set_defaults(func=cmd_verifica)
 
     sub.add_parser("stato", help="righe per tabella").set_defaults(func=cmd_stato)
+    sub.add_parser("sync-cloud", help="copia il database sul Postgres in cloud (CLOUD_DATABASE_URL) per l'app online"
+                   ).set_defaults(func=cmd_sync_cloud)
 
     args = ap.parse_args()
     if args.cmd == "alias" and args.source and not args.team:

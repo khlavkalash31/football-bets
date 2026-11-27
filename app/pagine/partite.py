@@ -7,7 +7,9 @@ st.title("Partite")
 st.write("Quote **eque** (senza margine del bookmaker) ricavate dalle quote medie di mercato. "
          "Conviene giocare solo dove il tuo book paga più della quota equa.")
 
-if core.db_ok():
+if core.read_only():
+    st.caption("Copia online: le quote si aggiornano dal PC (invio.py o `python -m db sync-cloud`).")
+elif core.db_ok():
     with st.expander("Aggiorna le quote"):
         st.write("Scarica le quote di adesso e le salva nel database, come `python weekend.py lista`. "
                  "Con The Odds API costa circa 2 crediti per competizione.")

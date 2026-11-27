@@ -38,8 +38,9 @@ future = int((matches["result"].isna()).sum()) - finite_senza
 d = v.score(v.pick(df, quale))
 
 with c3:
-    if st.button("Aggiorna risultati", help="Scarica i CSV della stagione da football-data e i risultati di "
-                                            "Champions da The Odds API (2 crediti)."):
+    if not core.read_only() and st.button(
+            "Aggiorna risultati", help="Scarica i CSV della stagione da football-data e i risultati di "
+                                       "Champions da The Odds API (2 crediti)."):
         import db
         import weekend
         from db.risultati import update_all

@@ -286,6 +286,19 @@ def aggiorna_formazioni(leagues: list[str], start: dt.date, days: int) -> None:
         print(f"Formazioni non salvate ({type(e).__name__}: {e}).", flush=True)
 
 
+def aggiorna_cloud() -> None:
+    """Copia il database sul Postgres in cloud letto dall'app online (solo se c'è CLOUD_DATABASE_URL).
+    Se non riesce l'app online mostra i dati della volta prima, con la loro data."""
+    try:
+        from db import cloud
+        if not cloud.cloud_url():
+            return
+        cloud.sync(log=lambda m: None)
+        print("Copia in cloud aggiornata.", flush=True)
+    except BaseException as e:  # sync esce con SystemExit se manca qualcosa: l'invio è già fatto, non si blocca
+        print(f"Copia in cloud non aggiornata ({type(e).__name__}: {e}).", flush=True)
+
+
 def invia(args) -> None:
     leagues, *_, min_matches = MODES[args.modo]
     if args.start:
@@ -359,6 +372,9 @@ def main():
         print(details)
         alert(f"invio {args.modo} non riuscito", details, args.dry_run)
         sys.exit(1)
+    finally:
+        if not args.dry_run:
+            aggiorna_cloud()
 
 if __name__ == "__main__":
     main()
