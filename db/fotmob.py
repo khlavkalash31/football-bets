@@ -256,8 +256,9 @@ def parse_match(path: Path) -> dict:
         players.append({
             "side": "h" if team == home_id else "a", "fm_player_id": pid, "name": p.get("name") or "",
             "started": (pid in starters) if has_lineup else None,
-            "minutes": s.get("minutes"), "goals": s.get("goals"), "assists": s.get("assists"),
-            "xg": s.get("xg"), "xa": s.get("xa"),
+            # FotMob omette le statistiche a zero (xG senza tiri, xA senza passaggi chiave, gol dei portieri)
+            "minutes": s.get("minutes"), "goals": s.get("goals") or 0, "assists": s.get("assists") or 0,
+            "xg": s.get("xg") or 0.0, "xa": s.get("xa") or 0.0,
         })
     return {"home_xg": home_xg, "away_xg": away_xg, "home_id": home_id, "away_id": away_id, "players": players}
 
