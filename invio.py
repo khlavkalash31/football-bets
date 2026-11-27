@@ -269,6 +269,23 @@ def aggiorna_risultati() -> None:
         print(f"Risultati non aggiornati ({type(e).__name__}: {e}).", flush=True)
 
 
+def aggiorna_formazioni(leagues: list[str], start: dt.date, days: int) -> None:
+    """Probabili formazioni e indisponibili da FotMob, salvati nel database con l'ora della rilevazione
+    (solo se c'è il database). Per ora non cambiano le quote: servono a costruire lo storico.
+    Se qualcosa non va l'email parte lo stesso."""
+    try:
+        import db
+        from db import fotmob
+        from db.formazioni import import_lineups
+        if not db.db_configured():
+            return
+        with db.connect() as conn:
+            s = import_lineups(conn, fotmob.Client(), leagues, start, days)
+        print(f"Formazioni FotMob: {s['con formazione']} partite su {s['partite']}.", flush=True)
+    except Exception as e:
+        print(f"Formazioni non salvate ({type(e).__name__}: {e}).", flush=True)
+
+
 def invia(args) -> None:
     leagues, *_, min_matches = MODES[args.modo]
     if args.start:
@@ -282,6 +299,7 @@ def invia(args) -> None:
     print(f"Partite dal {start} al {end}", flush=True)
     if not args.dry_run:
         aggiorna_risultati()
+        aggiorna_formazioni(list(leagues), start, days)
     root = Path("schedine")
     wdir = root / str(args.start)
     existed = wdir.exists()

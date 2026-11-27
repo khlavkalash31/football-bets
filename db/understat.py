@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import raw
+from .store import write_match_xg, write_player_match
 from .transfermarkt import match_games
 
 SOURCE = "understat"
@@ -172,11 +173,12 @@ def best_match(name: str, candidates: dict[int, str], threshold: float = 0.85) -
 
 
 class PlayerLinker:
-    """Collega gli id dei giocatori Understat ai nostri player_id (o crea il giocatore)."""
+    """Collega gli id dei giocatori di una fonte (Understat, FotMob) ai nostri player_id (o crea il giocatore)."""
 
-    def __init__(self, cur):
+    def __init__(self, cur, source: str = SOURCE):
         self.cur = cur
-        cur.execute("SELECT source_id, player_id FROM player_aliases WHERE source = %s", (SOURCE,))
+        self.source = source
+        cur.execute("SELECT source_id, player_id FROM player_aliases WHERE source = %s", (source,))
         self.known = {int(s): p for s, p in cur.fetchall()}
         cur.execute("SELECT player_id, name FROM players")
         self.by_norm: dict[str, list[int]] = defaultdict(list)
@@ -212,30 +214,10 @@ class PlayerLinker:
         else:
             self.linked += 1
         self.cur.execute("INSERT INTO player_aliases (source, source_id, player_id) VALUES (%s, %s, %s) "
-                         "ON CONFLICT DO NOTHING", (SOURCE, str(us_id), pid))
+                         "ON CONFLICT DO NOTHING", (self.source, str(us_id), pid))
         self.known[us_id] = pid
         roster[pid] = name
         return pid
-
-
-PM_COLS = ["match_id", "player_id", "team_id", "started", "minutes", "goals", "assists", "xg", "xa", "yellow", "red"]
-
-
-def _write_player_match(cur, rows: list[tuple]) -> None:
-    """Righe nuove: si inseriscono intere. Righe già importate da Transfermarkt: si aggiungono solo xG e xA,
-    tenendo minuti e titolari di Transfermarkt. Righe già di Understat: si aggiornano."""
-    if not rows:
-        return
-    cur.execute("CREATE TEMP TABLE tmp_us_pm (LIKE player_match INCLUDING DEFAULTS) ON COMMIT DROP")
-    with cur.copy(f"COPY tmp_us_pm ({', '.join(PM_COLS)}, source) FROM STDIN") as cp:
-        for r in rows:
-            cp.write_row((*r, SOURCE))
-    upd = ", ".join(f"{c} = CASE WHEN player_match.source = '{SOURCE}' THEN EXCLUDED.{c} ELSE player_match.{c} END"
-                    for c in PM_COLS[2:] if c not in ("xg", "xa"))
-    cur.execute(f"""INSERT INTO player_match ({', '.join(PM_COLS)}, source)
-                    SELECT {', '.join(PM_COLS)}, source FROM tmp_us_pm
-                    ON CONFLICT (match_id, player_id) DO UPDATE SET xg = EXCLUDED.xg, xa = EXCLUDED.xa, {upd}""")
-    cur.execute("DROP TABLE tmp_us_pm")
 
 
 def import_season(conn, client: Client | None, competition: str, season: int, log=print) -> dict[str, int]:
@@ -277,8 +259,7 @@ def import_season(conn, client: Client | None, competition: str, season: int, lo
 
         g = played.merge(games, on="game_id").merge(
             ours[["match_id", "match_date", "home_team_id", "away_team_id"]], on="match_id")
-        cur.executemany("UPDATE matches SET home_xg = %s, away_xg = %s WHERE match_id = %s",
-                        [(_f(r.home_xg), _f(r.away_xg), int(r.match_id)) for r in g.itertuples()])
+        write_match_xg(cur, SOURCE, [(int(r.match_id), _f(r.home_xg), _f(r.away_xg)) for r in g.itertuples()])
 
         linker = PlayerLinker(cur)
         rows: list[tuple] = []
@@ -314,7 +295,7 @@ def import_season(conn, client: Client | None, competition: str, season: int, lo
                 rows.append((int(r.match_id), pid, int(team), p["started"], p["minutes"], p["goals"], p["assists"],
                              p["xg"], p["xa"], p["yellow"], p["red"]))
             stats["con giocatori"] += 1
-        _write_player_match(cur, rows)
+        write_player_match(cur, SOURCE, rows)
         stats["giocatori collegati"], stats["giocatori nuovi"] = linker.linked, linker.created
     conn.commit()
     return stats

@@ -85,7 +85,7 @@ Limite: il dataset non si aggiorna più da luglio 2026, quindi copre fino al 202
 
 ```bash
 python -m db import-football-data --download   # prima i risultati aggiornati
-python -m db import-understat                  # poi xG, minuti e titolari della stagione in corso
+python -m db import-understat                  # poi xG, minuti e titolari della stagione in corso (o import-fotmob)
 ```
 
 Da [Understat](https://understat.com) arrivano gli xG di squadra (in `matches`) e, per ogni giocatore e
@@ -98,6 +98,41 @@ Ogni partita si scarica una sola volta (resta in `raw/understat/`), quindi rilan
 solo le nuove: conviene farlo dopo l'import di football-data, prima di preparare le giocate. Con
 `--from 2016` aggiunge gli xG delle stagioni passate: sono circa 19.000 pagine (più di 5 ore, una al secondo);
 se lo interrompi riparte da dove era.
+
+### xG da FotMob
+
+```bash
+python -m db migrate                           # una volta: tabelle per gli xG di più fonti
+python -m db import-fotmob                     # xG, minuti e titolari della stagione in corso, tutti e 6 i campionati
+```
+
+Seconda fonte di xG, utile quando Understat è giù e per il Portogallo, che Understat non ha. Gli xG di
+[FotMob](https://www.fotmob.com) vengono dal modello di Opta, diverso da quello di Understat, quindi i valori
+non si mescolano: ogni fonte ha i suoi in `match_xg` e `player_match_xg` (una riga per fonte). Le colonne
+`matches.home_xg/away_xg` e `player_match.xg/xa` tengono per comodità una fonte sola, Understat se c'è,
+altrimenti FotMob, indicata in `xg_source`. Per un modello conviene leggere una fonte sola da `match_xg`.
+
+FotMob non ha un'API pubblica: il comando legge gli stessi dati che usano le sue pagine, e il formato può
+cambiare senza preavviso. Ogni risposta resta in `raw/fotmob/`; se FotMob non dà i dati il comando si ferma e
+dice dove ha salvato la risposta. Come per Understat ogni partita si scarica una volta sola, `--from 2020`
+aggiunge le stagioni passate e `--offline` usa solo i file già scaricati.
+
+### Probabili formazioni (FotMob)
+
+```bash
+python -m db formazioni                        # prossimi 4 giorni, tutti e 6 i campionati
+python -m db formazioni --start 2026-12-04 --days 3
+```
+
+Nella pagina di ogni partita da giocare FotMob mostra la formazione prevista (fornita da Enetpulse): gli
+undici titolari, il modulo e gli indisponibili (infortunati, in nazionale, squalificati, in dubbio) con la data
+prevista di rientro. Vanno in `predicted_lineups` e `predicted_absences`, con l'ora della rilevazione: ogni
+volta che si lancia il comando si aggiunge una rilevazione nuova, così il modello potrà usare solo quello che
+si sapeva prima della partita. La vista `v_latest_lineups` dà l'ultima rilevazione per partita.
+
+Serve aver lanciato `import-fotmob` almeno una volta (per riconoscere le squadre). `invio.py` lo fa da solo
+prima di ogni email, se c'è il database. Per ora le formazioni non cambiano le quote: servono a costruire lo
+storico su cui verificare se e quanto correggerle. La Champions non è coperta.
 
 Tabelle e viste: `db/sql/`. Per leggere i dati (notebook, frontend) conviene partire dalle viste:
 `v_matches` (una riga per partita), `v_odds_wide` (quote e probabilità eque per fase e bookmaker),
