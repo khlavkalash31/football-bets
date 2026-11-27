@@ -117,6 +117,23 @@ cambiare senza preavviso. Ogni risposta resta in `raw/fotmob/`; se FotMob non d�
 dice dove ha salvato la risposta. Come per Understat ogni partita si scarica una volta sola, `--from 2020`
 aggiunge le stagioni passate e `--offline` usa solo i file già scaricati.
 
+### Probabili formazioni (FotMob)
+
+```bash
+python -m db formazioni                        # prossimi 4 giorni, tutti e 6 i campionati
+python -m db formazioni --start 2026-12-04 --days 3
+```
+
+Nella pagina di ogni partita da giocare FotMob mostra la formazione prevista (fornita da Enetpulse): gli
+undici titolari, il modulo e gli indisponibili (infortunati, in nazionale, squalificati, in dubbio) con la data
+prevista di rientro. Vanno in `predicted_lineups` e `predicted_absences`, con l'ora della rilevazione: ogni
+volta che si lancia il comando si aggiunge una rilevazione nuova, così il modello potrà usare solo quello che
+si sapeva prima della partita. La vista `v_latest_lineups` dà l'ultima rilevazione per partita.
+
+Serve aver lanciato `import-fotmob` almeno una volta (per riconoscere le squadre). `invio.py` lo fa da solo
+prima di ogni email, se c'è il database. Per ora le formazioni non cambiano le quote: servono a costruire lo
+storico su cui verificare se e quanto correggerle. La Champions non è coperta.
+
 Tabelle e viste: `db/sql/`. Per leggere i dati (notebook, frontend) conviene partire dalle viste:
 `v_matches` (una riga per partita), `v_odds_wide` (quote e probabilità eque per fase e bookmaker),
 `v_open_close` (apertura contro chiusura, per CLV e log loss), `v_latest_snapshot`. Da pandas o Streamlit

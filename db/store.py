@@ -115,6 +115,7 @@ def insert_prediction(cur, match_id: int, model_version: str, created_at: dt.dat
 _MATCH_KEYS = {"odds_snapshots": ("market", "outcome", "bookmaker", "phase", "taken_at"),
                "predictions": ("model_version", "created_at"),
                "predicted_lineups": ("team_id", "player_name", "source", "taken_at"),
+               "predicted_absences": ("team_id", "player_name", "source", "taken_at"),
                "match_xg": ("source",),
                "player_match_xg": ("player_id", "source"),
                "player_match": ("player_id",)}
@@ -141,7 +142,7 @@ def merge_team(cur, old: int, new: int) -> None:
         cur.execute("DELETE FROM matches WHERE match_id = %s", (mid,))
     cur.execute("DELETE FROM team_elo e WHERE team_id = %s AND EXISTS "
                 "(SELECT 1 FROM team_elo k WHERE k.team_id = %s AND k.elo_date = e.elo_date)", (old, new))
-    for table in ("player_match", "predicted_lineups", "team_elo", "team_aliases"):
+    for table in ("player_match", "predicted_lineups", "predicted_absences", "team_elo", "team_aliases"):
         cur.execute(f"UPDATE {table} SET team_id = %s WHERE team_id = %s", (new, old))
     cur.execute("DELETE FROM teams WHERE team_id = %s", (old,))
 

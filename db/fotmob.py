@@ -55,6 +55,7 @@ class Client:
     def __init__(self, delay: float = DELAY):
         self.delay = delay
         self._last = 0.0
+        self._api_broken = False  # se l'API non dà dati e la pagina sì, per il resto dell'import si usa la pagina
 
     def _get(self, path: str) -> bytes:
         wait = self.delay - (time.monotonic() - self._last)
@@ -68,12 +69,13 @@ class Client:
         finally:
             self._last = time.monotonic()
 
-    def _fetch(self, api_path: str, page_path: str, name: str, need: str) -> Path:
+    def _fetch(self, api_path: str | None, page_path: str, name: str, need: str) -> Path:
         """JSON dall'API; se non va, dalla pagina web (__NEXT_DATA__). Vale solo un JSON che contiene il campo
         'need'. Se nessuna delle due dà dati, salva l'ultima risposta come .html (così non viene scambiata per
         dati) e si ferma."""
         last, err = b"", ""
-        for path in (api_path, page_path):
+        paths = [p for p in (None if self._api_broken else api_path, page_path) if p]
+        for path in paths:
             try:
                 data = self._get(path)
             except urllib.error.HTTPError as e:
@@ -85,6 +87,8 @@ class Client:
                     continue
                 try:
                     if _first(json.loads(candidate), need) is not None:
+                        if path == page_path and api_path and path is not paths[0]:
+                            self._api_broken = True
                         return raw.save(SOURCE, name, candidate)
                 except ValueError:
                     pass
@@ -99,6 +103,10 @@ class Client:
         return self._fetch(f"/api/leagues?id={lid}&tab=fixtures&type=league&timeZone=Europe/Rome{q}",
                            f"/leagues/{lid}/fixtures/x" + ("" if not q else f"?season={label}"),
                            f"league_{lid}_{season}.json", "allMatches")
+
+    def lineup(self, game_id: int) -> Path:
+        """Pagina di una partita da giocare, con la formazione prevista (l'API per queste risponde 404)."""
+        return self._fetch(None, f"/match/{game_id}", f"lineup_{game_id}.json", "general")
 
     def match(self, game_id: int) -> Path:
         return self._fetch(f"/api/matchDetails?matchId={game_id}", f"/match/{game_id}", f"match_{game_id}.json",

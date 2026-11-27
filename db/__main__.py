@@ -13,6 +13,7 @@
     python -m db import-understat                 # stagione in corso da Understat: xG, minuti, titolari
     python -m db import-understat --from 2016     # anche le passate (lungo: migliaia di pagine, riprende da dove era)
     python -m db import-fotmob                    # stagione in corso da FotMob: xG (Opta), minuti, titolari, anche P1
+    python -m db formazioni                       # probabili formazioni e indisponibili dei prossimi 4 giorni (FotMob)
     python -m db stato                            # righe per tabella
 """
 from __future__ import annotations
@@ -126,6 +127,18 @@ def _import_xg(args, us, label: str):
     missing = [c for c in args.leagues if c not in us.LEAGUES]
     if missing:
         print(f"{', '.join(missing)}: {label} non li copre.")
+
+
+def cmd_formazioni(args):
+    from . import fotmob
+    from .formazioni import import_lineups
+
+    with connect() as conn:
+        try:
+            s = import_lineups(conn, fotmob.Client(), args.leagues, args.start, args.days)
+        except fotmob.SiteError as e:
+            sys.exit(str(e))
+    print("  " + " · ".join(f"{k}: {v}" for k, v in s.items()))
 
 
 def cmd_alias(args):
@@ -247,6 +260,12 @@ def main():
     p.add_argument("--leagues", nargs="+", default=list(LEAGUES))
     p.add_argument("--offline", action="store_true", help="usa solo i file già scaricati in raw/fotmob")
     p.set_defaults(func=cmd_import_fotmob)
+
+    p = sub.add_parser("formazioni", help="probabili formazioni e indisponibili delle prossime partite (FotMob)")
+    p.add_argument("--start", type=dt.date.fromisoformat, default=dt.date.today(), help="primo giorno (default oggi)")
+    p.add_argument("--days", type=int, default=4)
+    p.add_argument("--leagues", nargs="+", default=list(LEAGUES))
+    p.set_defaults(func=cmd_formazioni)
 
     p = sub.add_parser("alias", help="controlla o correggi i nomi squadra delle altre fonti")
     p.add_argument("source", nargs="?", help="fonte, es. the-odds-api")
