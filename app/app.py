@@ -26,8 +26,11 @@ with st.sidebar:
     st.date_input("Dal giorno", key="start", min_value=dt.date.today(), format="DD/MM/YYYY")
     st.slider("Giorni", 1, 7, key="days")
     ok, msg = core.db_status()
-    st.caption(("🟢 Database: " if ok else "⚪ ") + msg)
-    if not core.odds_key():
+    if core.read_only():
+        st.caption(f"🟢 Dati copiati dal PC il {core.synced_at().astimezone(core.ROME):%d/%m alle %H:%M}")
+    else:
+        st.caption(("🟢 Database: " if ok else "⚪ ") + msg)
+    if not core.odds_key() and not core.db_ok():
         st.caption("⚠️ Manca ODDS_API_KEY: uso le quote di football-data (senza Champions).")
 
 nav.run()

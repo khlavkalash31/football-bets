@@ -49,13 +49,28 @@ def db_status() -> tuple[bool, str]:
     try:
         with db.connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM schema_migrations")
-        return True, db.database_url().split("@")[-1]
+        return True, db.database_url().split("@")[-1].split("?")[0]
     except Exception as e:
         return False, f"database non raggiungibile: {type(e).__name__}"
 
 
 def db_ok() -> bool:
     return db_status()[0]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def synced_at():
+    """Ora dell'ultima copia dal PC se il database è la copia in cloud (python -m db sync-cloud), altrimenti None.
+    La copia si sovrascrive a ogni sincronizzazione: lì l'app non scrive niente."""
+    import db
+    from db.cloud import last_sync
+
+    with db.connect() as conn:
+        return last_sync(conn)
+
+
+def read_only() -> bool:
+    return db_ok() and synced_at() is not None
 
 
 @st.cache_data(ttl=300, show_spinner=False)
